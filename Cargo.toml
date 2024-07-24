@@ -1,0 +1,19 @@
+[package]
+name = "wxchat"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.12.4", features = ["json"] }
+tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
+regex = "1.10.4"
+bytes = "1.6.0"
+xml-doc = "0.2.0"
+serde_json = "1.0.116"
+reqwest_cookie_store = "0.7.0"
+quick-xml = "0.31.0"
+serde = { version = "1.0.198", features = ["derive"] }
+rocket = { version = "0.5.0", features = ["secrets", "tls", "json"] }
+lazy_static = "1.4.0"
