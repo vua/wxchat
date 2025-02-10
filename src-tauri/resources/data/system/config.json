@@ -1,0 +1,26 @@
+[
+  {
+    "Source": "智谱",
+    "Url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    "Model": [
+      "glm-4",
+      "glm-4v",
+      "glm-4-plus",
+      "glm-4v-plus",
+      "glm-4-flash",
+      "glm-4v-flash",
+      "glm-4-flashx",
+      "glm-4-airx",
+      "glm-4-long",
+      "charglm-4"
+    ]
+  },
+  {
+    "Source": "DeepSeek",
+    "Url": "https://api.deepseek.com/chat/completions",
+    "Model": [
+      "deepseek-chat",
+      "deepseek-reasoner"
+    ]
+  }
+]

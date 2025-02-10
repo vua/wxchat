@@ -1,0 +1,37 @@
+{
+  "name": "wxchat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@codemirror/lang-json": "^6.0.1",
+    "@codemirror/theme-one-dark": "^6.1.2",
+    "@element-plus/icons-vue": "^2.3.1",
+    "@nuxt/devalue": "^2.0.2",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-fs": "^2.2.0",
+    "@tauri-apps/plugin-opener": "^2",
+    "basic.css": "link:@codemirror/view/style/basic.css",
+    "codemirror": "^6.0.1",
+    "element-plus": "^2.9.3",
+    "element-ui": "^2.15.14",
+    "pinia": "^2.3.0",
+    "uuid": "^11.0.5",
+    "vue": "^3.5.13",
+    "vue-json-pretty": "^2.4.0",
+    "vuex": "^4.0.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.1.10"
+  }
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "Id": "all",
+    "Name": "全人群(包含好友、群聊、公众号)",
+    "Members": [],
+    "Operator": "system"
+  },
+  {
+    "Id": "all_membership",
+    "Name": "全部好友",
+    "Members": [],
+    "Operator": "system"
+  },
+  {
+    "Id": "all_classroom",
+    "Name": "全部群聊",
+    "Members": [],
+    "Operator": "system"
+  },
+  {
+    "Id": "all_account",
+    "Name": "全部公众号",
+    "Members": [],
+    "Operator": "system"
+  }
+]
