@@ -1,13 +1,16 @@
 use crate::openapi::member::ContactMember;
 use crate::openapi::tool::file_tool;
+use cron::Schedule;
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::io;
 
 pub static APPDATA_PATH: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::new()));
@@ -95,7 +98,7 @@ impl OpenAiService {
 
     pub fn m_get(&mut self) -> io::Result<Vec<OpenAi>> {
         let mut data = file_tool::get_or_create_file(self.data_path.as_path())?;
-        if data == "" {
+        if data.is_empty() {
             data = "[]".to_string();
         }
         let openai_list: Vec<OpenAi> = serde_json::from_str(&data)?;
@@ -103,7 +106,7 @@ impl OpenAiService {
     }
 
     pub fn get(&mut self, id: &str) -> Result<Option<OpenAi>, Box<dyn Error>> {
-        if id == "" {
+        if id.is_empty() {
             return Ok(None);
         }
         let openai_list = self.m_get()?;
@@ -180,7 +183,7 @@ impl OpenAiService {
                 break;
             }
         }
-        if url == "" {
+        if url.is_empty() {
             return Err(Box::from("url not found"));
         }
 
@@ -240,7 +243,7 @@ impl OpenAiConfigService {
 
     pub fn m_get(&mut self) -> io::Result<Vec<OpenAiConfig>> {
         let mut data = file_tool::get_or_create_file(self.data_path.as_path())?;
-        if data == "" {
+        if data.is_empty() {
             data = "[]".to_string();
         }
         let config: Vec<OpenAiConfig> = serde_json::from_str(&data)?;
@@ -311,7 +314,7 @@ impl GroupService {
 
     pub fn m_get(&mut self) -> io::Result<Vec<Group>> {
         let mut data = file_tool::get_or_create_file(self.data_path.as_path())?;
-        if data == "" {
+        if data.is_empty() {
             data = "[]".to_string();
         }
         let groups: Vec<Group> = serde_json::from_str(&data)?;
@@ -319,7 +322,7 @@ impl GroupService {
     }
 
     pub fn get(&mut self, id: &str) -> Result<Option<Group>, Box<dyn Error>> {
-        if id == "" {
+        if id.is_empty() {
             return Ok(None);
         }
         let groups = self.m_get()?;
@@ -393,12 +396,23 @@ impl Group {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct Rule {
+pub struct AutoReplyRule {
     pub id: String,
     pub name: String,
-    pub group: String,
+    pub group: Group,
     pub reply: Vec<Reply>,
-    pub status: String,
+    pub status: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ScheduledRule {
+    pub id: String,
+    pub cron: String,
+    pub name: String,
+    pub group: Group,
+    pub reply: Vec<Reply>,
+    pub status: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -406,7 +420,7 @@ pub struct Rule {
 pub struct Reply {
     pub reply_type: String,
     pub template: Template,
-    pub open_ai: String,
+    pub open_ai: OpenAi,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -419,6 +433,9 @@ pub struct Template {
 impl Reply {
     pub fn hit(&self, content: &str) -> bool {
         if self.reply_type == "AI" {
+            return true;
+        }
+        if self.template.keywords.len() == 0 {
             return true;
         }
         self.template.keywords.iter().any(|k| content.contains(k))
@@ -435,64 +452,61 @@ impl Reply {
             });
         }
         let mut service = OpenAiService::new();
-        let openai = service.get(&self.open_ai)?.unwrap();
+        let openai = service.get(&self.open_ai.id)?.unwrap();
         service.context_generate(openai, content).await
     }
 }
 
-pub struct RuleWrapper {
-    pub rule: Rule,
-    pub group: Group,
-}
-
-pub struct RuleService {
+pub struct AutoReplyRuleService {
     data_path: PathBuf,
 }
 
-impl RuleService {
-    pub fn new() -> RuleService {
-        RuleService {
-            data_path: APPDATA_PATH.lock().unwrap().join("data/user/rules.json"),
+impl AutoReplyRuleService {
+    pub fn new() -> AutoReplyRuleService {
+        AutoReplyRuleService {
+            data_path: APPDATA_PATH
+                .lock()
+                .unwrap()
+                .join("data/user/auto_reply_rules.json"),
         }
     }
 
-    pub fn create(&mut self, rule: Rule) -> io::Result<Vec<Rule>> {
+    pub fn create(&mut self, rule: AutoReplyRule) -> io::Result<Vec<AutoReplyRule>> {
         let mut rules = self.m_get()?;
         rules.push(rule);
         self.write(&rules)?;
         Ok(rules)
     }
 
-    pub fn write(&mut self, rules: &Vec<Rule>) -> io::Result<()> {
+    pub fn write(&mut self, rules: &Vec<AutoReplyRule>) -> io::Result<()> {
         let data = serde_json::to_string(&rules)?;
         fs::write(self.data_path.as_path(), data)?;
         Ok(())
     }
 
-    pub fn m_get(&mut self) -> io::Result<Vec<Rule>> {
+    pub fn m_get(&mut self) -> io::Result<Vec<AutoReplyRule>> {
         let mut data = file_tool::get_or_create_file(self.data_path.as_path())?;
-        if data == "" {
+        if data.is_empty() {
             data = "[]".to_string();
         }
-        let rules: Vec<Rule> = serde_json::from_str(&data)?;
+        let rules: Vec<AutoReplyRule> = serde_json::from_str(&data)?;
         Ok(rules)
     }
 
-    pub fn m_get_running(&mut self) -> io::Result<Vec<RuleWrapper>> {
-        let rules = self.m_get()?;
-        let mut wrappers: Vec<RuleWrapper> = Vec::new();
+    pub fn m_get_running(&mut self) -> io::Result<Vec<AutoReplyRule>> {
+        let mut rules = self.m_get()?;
         let mut group_service = GroupService::new();
-        for rule in rules {
-            if rule.status != "Running" {
+        for rule in rules.iter_mut() {
+            if !rule.status {
                 continue;
             }
-            let group = group_service.get(&rule.group).unwrap().unwrap();
-            wrappers.push(RuleWrapper { rule, group })
+            let group = group_service.get(&rule.group.id).unwrap().unwrap();
+            rule.group = group;
         }
-        Ok(wrappers)
+        Ok(rules)
     }
 
-    pub fn del(&mut self, id: String) -> io::Result<Vec<Rule>> {
+    pub fn del(&mut self, id: String) -> io::Result<Vec<AutoReplyRule>> {
         let mut rules = self.m_get()?;
         let mut find = false;
         let mut index = 0;
@@ -511,7 +525,7 @@ impl RuleService {
         Ok(rules)
     }
 
-    pub fn update(&mut self, rule: Rule) -> io::Result<Vec<Rule>> {
+    pub fn update(&mut self, rule: AutoReplyRule) -> io::Result<Vec<AutoReplyRule>> {
         let mut rules = self.m_get()?;
 
         for item in rules.iter_mut() {
@@ -525,16 +539,111 @@ impl RuleService {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
+pub struct ScheduledRuleService {
+    data_path: PathBuf,
+}
 
-    #[test]
-    pub fn test_map_vec() {
-        let mut map: HashMap<String, Vec<String>> = HashMap::new();
-        map.insert(String::from("a"), vec![String::from("b")]);
-        let value = map.get_mut("a").unwrap();
-        value.push(String::from("c"));
-        println!("{:?}", map);
+impl ScheduledRuleService {
+    pub fn new() -> ScheduledRuleService {
+        ScheduledRuleService {
+            data_path: APPDATA_PATH
+                .lock()
+                .unwrap()
+                .join("data/user/scheduled_rules.json"),
+        }
+    }
+
+    pub fn create(&mut self, rule: ScheduledRule) -> io::Result<Vec<ScheduledRule>> {
+        let mut rules = self.m_get()?;
+        rules.push(rule);
+        self.write(&rules)?;
+        Ok(rules)
+    }
+
+    pub fn write(&mut self, rules: &Vec<ScheduledRule>) -> io::Result<()> {
+        let data = serde_json::to_string(&rules)?;
+        fs::write(self.data_path.as_path(), data)?;
+        Ok(())
+    }
+
+    pub fn m_get(&mut self) -> io::Result<Vec<ScheduledRule>> {
+        let mut data = file_tool::get_or_create_file(self.data_path.as_path())?;
+        if data.is_empty() {
+            data = "[]".to_string();
+        }
+        let rules: Vec<ScheduledRule> = serde_json::from_str(&data)?;
+        Ok(rules)
+    }
+
+    pub fn m_get_running(&mut self) -> io::Result<Vec<ScheduledRule>> {
+        let mut rules = self.m_get()?;
+        let mut group_service = GroupService::new();
+        for rule in rules.iter_mut() {
+            if !rule.status {
+                continue;
+            }
+            let group = group_service.get(&rule.group.id).unwrap().unwrap();
+            rule.group = group;
+        }
+        Ok(rules)
+    }
+
+    pub fn del(&mut self, id: String) -> io::Result<Vec<ScheduledRule>> {
+        let mut rules = self.m_get()?;
+        let mut find = false;
+        let mut index = 0;
+        for (i, rule) in rules.iter().enumerate() {
+            if rule.id == id {
+                index = i;
+                find = true;
+                break;
+            }
+        }
+        if !find {
+            return Ok(rules);
+        }
+        rules.remove(index);
+        self.write(&rules)?;
+        Ok(rules)
+    }
+
+    pub fn update(&mut self, rule: ScheduledRule) -> io::Result<Vec<ScheduledRule>> {
+        let mut rules = self.m_get()?;
+
+        for item in rules.iter_mut() {
+            if item.id == rule.id {
+                *item = rule;
+                break;
+            }
+        }
+        self.write(&rules)?;
+        Ok(rules)
+    }
+
+    pub async fn schedule(&mut self, rule: &ScheduledRule) {
+        // 解析 Cron 表达式
+        let schedule = match Schedule::from_str(&rule.cron) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to parse cron expression for {}: {}", rule.name, e);
+                return;
+            }
+        };
+
+        loop {
+            // 获取当前时间
+            let now = chrono::Utc::now();
+            // 计算下一次任务执行的时间
+            if let Some(next_time) = schedule.upcoming(chrono::Utc).next() {
+                // 计算距离下一次执行的时间差
+                let duration = next_time
+                    .signed_duration_since(now)
+                    .to_std()
+                    .unwrap_or(Duration::from_secs(0));
+                // 等待到下一次执行时间
+                // 执行定时任务
+                println!("{} 定时任务执行于: {}", rule.name, next_time);
+            }
+        }
     }
 }

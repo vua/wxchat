@@ -35,6 +35,9 @@ importers:
       codemirror:
         specifier: ^6.0.1
         version: 6.0.1
+      cron-parser:
+        specifier: ^5.0.0
+        version: 5.0.0
       element-plus:
         specifier: ^2.9.3
         version: 2.9.3(vue@3.5.13(typescript@5.6.3))
@@ -605,6 +608,10 @@ packages:
   crelt@1.0.6:
     resolution: {integrity: sha512-VQ2MBenTq1fWZUH9DJNGti7kKv6EeAuYr3cLwxUWhIu1baTaXh4Ib5W2CqHVqib4/MqbYGJqiL3Zb8GJZr3l4g==}
 
+  cron-parser@5.0.0:
+    resolution: {integrity: sha512-EVJC19ihdwT6o9SkfwT0HKvGlm2la0MIBB+GXFNOcRLK68uzMBbTAmiwVkKYltn9IcqqHjqmdNR2YII1VfH22A==}
+    engines: {node: '>=18'}
+
   csstype@3.1.3:
     resolution: {integrity: sha512-M1uQkMl8rQK/szD0LNhtqxIPLpimGm8sOBwU7lLnCpSbTyY3yeU1Vc7l4KT5zT4s/yOxHH5O7tIuuLOCnLADRw==}
 
@@ -664,6 +671,10 @@ packages:
 
   lodash@4.17.21:
     resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
+
+  luxon@3.5.0:
+    resolution: {integrity: sha512-rh+Zjr6DNfUYR3bPwJEnuwDdqMbxZW7LOQfUN4B54+Cl+0o5zaU9RJ6bcidfDtC1cWCZXQ+nvX8bf6bAji37QQ==}
+    engines: {node: '>=12'}
 
   magic-string@0.30.17:
     resolution: {integrity: sha512-sNPKHvyjVf7gyjwS4xGTaW/mCnF8wnjtifKBEhxfZ7E/S8tQ0rssrwGNn6q8JH/ohItJfSQp9mBtQYuTlH5QnA==}
@@ -1274,6 +1285,10 @@ snapshots:
 
   crelt@1.0.6: {}
 
+  cron-parser@5.0.0:
+    dependencies:
+      luxon: 3.5.0
+
   csstype@3.1.3: {}
 
   dayjs@1.11.13: {}
@@ -1361,6 +1376,8 @@ snapshots:
       lodash-es: 4.17.21
 
   lodash@4.17.21: {}
+
+  luxon@3.5.0: {}
 
   magic-string@0.30.17:
     dependencies:

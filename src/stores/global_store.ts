@@ -23,19 +23,19 @@ export interface Group {
     Operator: string
 }
 
-export interface Rule {
+export interface AutoReplyRule {
     Id: string
     Name: string
-    Group: string
+    Group: Group
     Reply: Reply[]
-    Status: string
+    Status: boolean
 }
 
 
 export interface Reply {
     ReplyType: string
     Template: Template
-    OpenAi: string
+    OpenAi: OpenAi
 }
 
 export interface Template {
@@ -60,13 +60,13 @@ export interface OpenAiConfig {
     Model: string[]
 }
 
-export interface TimedRule {
+export interface ScheduledRule {
     Id: string
     Name: string
     Cron: string
-    Group: string
-    Content: string[]
-    Status: string
+    Group: Group
+    Reply: Reply[]
+    Status: boolean
 }
 
 export const globalStore = defineStore('global', () => {
@@ -75,8 +75,8 @@ export const globalStore = defineStore('global', () => {
     const select_members = ref<Member[]>([])
     const user = ref<User>()
     const groups = ref<Group[]>([])
-    const rules = ref<Rule[]>([])
-    const timed_rules = ref<TimedRule[]>([])
+    const auto_reply_rules = ref<AutoReplyRule[]>([])
+    const scheduled_rules = ref<ScheduledRule[]>([])
     const selectable = ref<boolean>(true)
     const member_table = ref<TableInstance>()
     const openai_list = ref<OpenAi[]>([])
@@ -92,8 +92,8 @@ export const globalStore = defineStore('global', () => {
         user,
         groups,
         openai_list,
-        rules,
-        timed_rules,
+        auto_reply_rules,
+        scheduled_rules,
         selectable,
         openai_config_list,
         root,

@@ -1,23 +1,25 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+mod executor;
 mod openapi;
 
+use crate::executor::Executor;
 use crate::openapi::base::Base;
 use crate::openapi::login::Login;
 use crate::openapi::member::Member;
 use crate::openapi::message::MessageService;
 use crate::openapi::rule::{
-    Group, GroupService, OpenAi, OpenAiConfig, OpenAiConfigService, OpenAiService, Rule,
-    RuleService, APPDATA_PATH,
+    AutoReplyRule, AutoReplyRuleService, Group, GroupService, OpenAi, OpenAiConfig,
+    OpenAiConfigService, OpenAiService, ScheduledRule, ScheduledRuleService, APPDATA_PATH,
 };
 use once_cell::sync::Lazy;
 use openapi::client::WxOpenapiClient;
+use std::env;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::{env, time};
+use std::time::Duration;
 use tauri::path::BaseDirectory;
 use tauri::{command, generate_context, Manager, State};
 use tokio::sync::{mpsc, Mutex};
@@ -137,37 +139,37 @@ fn del_group(_: State<'_, Mutex<AppState>>, id: String) -> Result<String, ()> {
 }
 
 #[command]
-fn create_rule(_: State<'_, Mutex<AppState>>, config: String) -> Result<String, ()> {
-    println!("create rule");
-    let rule: Rule = serde_json::from_str(&config).unwrap();
-    let rules = RuleService::new().create(rule).unwrap();
+fn create_auto_reply_rule(_: State<'_, Mutex<AppState>>, config: String) -> Result<String, ()> {
+    println!("create auto reply rule");
+    let rule: AutoReplyRule = serde_json::from_str(&config).unwrap();
+    let rules = AutoReplyRuleService::new().create(rule).unwrap();
     let configs = serde_json::to_string(&rules).unwrap();
     Ok(configs)
 }
 
 #[command]
-fn get_rules(_: State<'_, Mutex<AppState>>) -> Result<String, ()> {
-    println!("get rules");
-    let rules = RuleService::new().m_get().unwrap();
-    let configs = serde_json::to_string(&rules).unwrap();
-    println!("rules={:?}", &rules);
-    Ok(configs)
-}
-
-#[command]
-fn del_rule(_: State<'_, Mutex<AppState>>, id: String) -> Result<String, ()> {
-    println!("del rule");
-    let rules = RuleService::new().del(id).unwrap();
+fn get_auto_reply_rules(_: State<'_, Mutex<AppState>>) -> Result<String, ()> {
+    println!("get auto reply rules");
+    let rules = AutoReplyRuleService::new().m_get().unwrap();
     let configs = serde_json::to_string(&rules).unwrap();
     println!("rules={:?}", &rules);
     Ok(configs)
 }
 
 #[command]
-fn update_rule(_: State<'_, Mutex<AppState>>, config: String) -> Result<String, ()> {
-    println!("update rule");
-    let rule: Rule = serde_json::from_str(&config).unwrap();
-    let rules = RuleService::new().update(rule).unwrap();
+fn del_auto_reply_rule(_: State<'_, Mutex<AppState>>, id: String) -> Result<String, ()> {
+    println!("del auto reply rule");
+    let rules = AutoReplyRuleService::new().del(id).unwrap();
+    let configs = serde_json::to_string(&rules).unwrap();
+    println!("rules={:?}", &rules);
+    Ok(configs)
+}
+
+#[command]
+fn update_auto_reply_rule(_: State<'_, Mutex<AppState>>, config: String) -> Result<String, ()> {
+    println!("update auto reply rule");
+    let rule: AutoReplyRule = serde_json::from_str(&config).unwrap();
+    let rules = AutoReplyRuleService::new().update(rule).unwrap();
     let configs = serde_json::to_string(&rules).unwrap();
     println!("rules={:?}", &rules);
     Ok(configs)
@@ -246,13 +248,17 @@ async fn listen(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
 
     let (tx, mut rx) = mpsc::channel(1);
     let mut handle = tokio::spawn(async move {
-        let mut service = MessageService::new();
+        // let mut service = MessageService::new();
+        let mut executor = Executor::new();
 
         loop {
             let temp = Arc::clone(&arc_base);
             let mut base = temp.lock().await;
             println!("waiting for response");
-            service.sync(WX_CLIENT.client(), &mut base).await;
+            let _ = executor
+                .auto_reply(WX_CLIENT.client(), &mut base)
+                .await
+                .unwrap();
             tx.send(true).await.unwrap();
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -271,13 +277,13 @@ async fn listen(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
                 rx = next_rx;
                 let next_base = Arc::clone(&next_arc_base);
                 let next_handle = tokio::spawn(async move {
-                    let mut service = MessageService::new();
-
+                    // let mut service = MessageService::new();
+                    let mut executor = Executor::new();
                     loop {
                         println!("waiting for response");
                         let temp = Arc::clone(&next_base);
                         let mut base = temp.lock().await;
-                        service.sync(WX_CLIENT.client(), &mut base).await;
+                        executor.auto_reply(WX_CLIENT.client(), &mut base).await;
                         next_tx.send(true).await.unwrap();
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
@@ -286,6 +292,43 @@ async fn listen(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
             }
         }
     }
+}
+
+#[command]
+fn create_scheduled_rule(_: State<'_, Mutex<AppState>>, config: String) -> Result<String, ()> {
+    println!("create scheduled rule");
+    let rule: ScheduledRule = serde_json::from_str(&config).unwrap();
+    let rules = ScheduledRuleService::new().create(rule).unwrap();
+    let configs = serde_json::to_string(&rules).unwrap();
+    Ok(configs)
+}
+
+#[command]
+fn get_scheduled_rules(_: State<'_, Mutex<AppState>>) -> Result<String, ()> {
+    println!("get scheduled rules");
+    let rules = ScheduledRuleService::new().m_get().unwrap();
+    let configs = serde_json::to_string(&rules).unwrap();
+    println!("rules={:?}", &rules);
+    Ok(configs)
+}
+
+#[command]
+fn del_scheduled_rule(_: State<'_, Mutex<AppState>>, id: String) -> Result<String, ()> {
+    println!("del scheduled rule");
+    let rules = ScheduledRuleService::new().del(id).unwrap();
+    let configs = serde_json::to_string(&rules).unwrap();
+    println!("rules={:?}", &rules);
+    Ok(configs)
+}
+
+#[command]
+fn update_scheduled_rule(_: State<'_, Mutex<AppState>>, config: String) -> Result<String, ()> {
+    println!("update scheduled rule");
+    let rule: ScheduledRule = serde_json::from_str(&config).unwrap();
+    let rules = ScheduledRuleService::new().update(rule).unwrap();
+    let configs = serde_json::to_string(&rules).unwrap();
+    println!("rules={:?}", &rules);
+    Ok(configs)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -310,10 +353,10 @@ pub async fn run() {
             create_group,
             get_groups,
             del_group,
-            create_rule,
-            get_rules,
-            del_rule,
-            update_rule,
+            create_auto_reply_rule,
+            get_auto_reply_rules,
+            del_auto_reply_rule,
+            update_auto_reply_rule,
             create_openai,
             get_openai_list,
             del_openai,
@@ -321,7 +364,11 @@ pub async fn run() {
             test_openai,
             get_openai_config,
             update_openai_config,
-            listen
+            listen,
+            create_scheduled_rule,
+            get_scheduled_rules,
+            del_scheduled_rule,
+            update_scheduled_rule,
         ])
         .run(generate_context! {})
         .expect("error while running tauri application");

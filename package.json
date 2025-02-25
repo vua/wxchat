@@ -19,6 +19,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "basic.css": "link:@codemirror/view/style/basic.css",
     "codemirror": "^6.0.1",
+    "cron-parser": "^5.0.0",
     "element-plus": "^2.9.3",
     "element-ui": "^2.15.14",
     "pinia": "^2.3.0",

@@ -3,11 +3,20 @@
 
 import {computed, reactive, ref, watch} from 'vue'
 import {ElInput, ElMessage, ElTable, TableInstance} from 'element-plus'
-import {globalStore, Group, OpenAi, OpenAiConfig, Rule, TimedRule} from "../stores/global_store.ts";
+import {
+  globalStore,
+  Group,
+  OpenAi,
+  OpenAiConfig,
+  Template,
+  ScheduledRule,
+  AutoReplyRule
+} from "../stores/global_store.ts";
 import {storeToRefs} from "pinia";
 import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import {v4 as uuidv4} from 'uuid';
-import {Box, CaretRight, ChatLineRound, Clock, Connection, Delete} from "@element-plus/icons-vue";
+import {Box, CaretRight, ChatLineRound, Clock, Connection} from "@element-plus/icons-vue";
+import cronParser from 'cron-parser';
 
 const store = globalStore()
 const {
@@ -16,8 +25,8 @@ const {
   openai_list,
   openai_config_list,
   groups,
-  rules,
-  timed_rules,
+  auto_reply_rules,
+  scheduled_rules,
   selectable,
   root
 } = storeToRefs(store)
@@ -27,8 +36,13 @@ async function loadGroups() {
   console.log("加载人群包")
 }
 
-async function loadRules() {
-  rules.value = JSON.parse(await invoke("get_rules", {})) as Rule[];
+async function loadAutoReplyRules() {
+  auto_reply_rules.value = JSON.parse(await invoke("get_auto_reply_rules", {})) as AutoReplyRule[];
+  console.log("加载规则")
+}
+
+async function loadScheduledRules() {
+  scheduled_rules.value = JSON.parse(await invoke("get_scheduled_rules", {})) as ScheduledRule[];
   console.log("加载规则")
 }
 
@@ -58,13 +72,10 @@ const getImgSrc = (name: string) => {
 
 
 loadGroups()
-loadRules()
 loadOpenAiList()
+loadScheduledRules()
+loadAutoReplyRules()
 loadOpenAiConfigMap()
-
-// let tabIndex = 0
-// const editableTabsValue = ref('2')
-// const editableTabs = ref<Rule[]>([])
 
 async function createGroup() {
   let name = group.Name
@@ -109,57 +120,57 @@ async function createGroup() {
   })
 }
 
-const ruleCreateVisible = ref(false)
-const timedRuleCreateVisible = ref(false)
+const autoReplyRuleCreateVisible = ref(false)
+const scheduledRuleCreateVisible = ref(false)
 const openAiCreateVisible = ref(false)
 
-async function createRule() {
-  let name = rule.Name
-  if (rule.Name == "") {
+async function createAutoReplyRule() {
+  let name = auto_reply_rule.Name
+  if (auto_reply_rule.Name == "") {
     ElMessage({
-      message: "Rule名称不能为空 .",
+      message: "AutoReplyRule名称不能为空 .",
       type: 'warning',
     })
     return
   }
-  if (rule.Group == "") {
+  if (auto_reply_rule.Group.Id == "") {
     ElMessage({
-      message: "Rule : " + rule.Name + " , 人群包不能为空 .",
+      message: "Rule : " + auto_reply_rule.Name + " , 人群包不能为空 .",
       type: 'warning',
     })
     return
   }
-  for (const item of rules.value) {
-    if (item.Name == rule.Name) {
+  for (const item of auto_reply_rules.value) {
+    if (item.Name == auto_reply_rule.Name) {
       ElMessage({
-        message: "Rule : " + rule.Name + "已存在 , 请重新命名 .",
+        message: "Rule : " + auto_reply_rule.Name + "已存在 , 请重新命名 .",
         type: 'warning',
       })
       return
     }
   }
 
-  if (rule.Reply.length == 0) {
+  if (auto_reply_rule.Reply.length == 0) {
     ElMessage({
-      message: "Rule : " + rule.Name + " , 回复列表为空 .",
+      message: "Rule : " + auto_reply_rule.Name + " , 回复列表为空 .",
       type: 'warning',
     })
     return
   }
 
-  for (let reply of rule.Reply) {
+  for (let reply of auto_reply_rule.Reply) {
     if (reply.ReplyType == "Template") {
       if (reply.Template.Content == "") {
         ElMessage({
-          message: "Rule : " + rule.Name + " , 回复模板不能为空 .",
+          message: "Rule : " + auto_reply_rule.Name + " , 回复模板不能为空 .",
           type: 'warning',
         })
         return
       }
     } else {
-      if (reply.OpenAi == "") {
+      if (reply.OpenAi.Id == "") {
         ElMessage({
-          message: "Rule : " + rule.Name + " , OpenAi不能为空 .",
+          message: "Rule : " + auto_reply_rule.Name + " , Model不能为空 .",
           type: 'warning',
         })
         return
@@ -167,16 +178,109 @@ async function createRule() {
     }
   }
 
-  rule.Id = uuidv4()
-  let config: String = JSON.stringify(rule)
-  rules.value = JSON.parse(await invoke("create_rule", {config: config}));
-  rule.Id = ""
-  rule.Name = ""
-  rule.Group = ""
-  rule.Reply = []
-  rule.Status = "stop"
+  auto_reply_rule.Id = uuidv4()
+  let config: String = JSON.stringify(auto_reply_rule)
+  auto_reply_rules.value = JSON.parse(await invoke("create_auto_reply_rule", {config: config}));
+  auto_reply_rule.Id = ""
+  auto_reply_rule.Name = ""
+  auto_reply_rule.Group = groupDefault
+  auto_reply_rule.Reply = []
+  auto_reply_rule.Status = false
 
-  ruleCreateVisible.value = false
+  autoReplyRuleCreateVisible.value = false
+  ElMessage({
+    message: "Rule : " + name + " , 创建成功 .",
+    type: 'success',
+  })
+}
+
+
+async function createScheduledRule() {
+  let name = scheduled_rule.Name
+  if (scheduled_rule.Name == "") {
+    ElMessage({
+      message: "Rule名称不能为空 .",
+      type: 'warning',
+    })
+    return
+  }
+  if (scheduled_rule.Group.Id == "") {
+    ElMessage({
+      message: "Rule : " + scheduled_rule.Name + " , 人群包不能为空 .",
+      type: 'warning',
+    })
+    return
+  }
+  if (scheduled_rule.Cron == "") {
+    ElMessage({
+      message: "Rule : " + scheduled_rule.Cron + " , Cron表达式不能为空 .",
+      type: 'warning',
+    })
+    return
+  }
+  if (!validateCronExpression(scheduled_rule.Cron)) {
+    ElMessage({
+      message: "Rule : " + scheduled_rule.Cron + " , Cron表达式不正确 .",
+      type: 'warning',
+    })
+    return
+  }
+  for (const item of scheduled_rules.value) {
+    if (item.Name == scheduled_rule.Name) {
+      ElMessage({
+        message: "Rule : " + scheduled_rule.Name + "已存在 , 请重新命名 .",
+        type: 'warning',
+      })
+      return
+    }
+  }
+
+  if (scheduled_rule.Reply.length == 0) {
+    ElMessage({
+      message: "Rule : " + scheduled_rule.Name + " , 回复列表为空 .",
+      type: 'warning',
+    })
+    return
+  }
+
+  for (let reply of scheduled_rule.Reply) {
+    if (reply.ReplyType == "Template") {
+      if (reply.Template.Content == "") {
+        ElMessage({
+          message: "Rule : " + scheduled_rule.Name + " , 消息内容不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+    } else {
+      if (reply.OpenAi.Id == "") {
+        ElMessage({
+          message: "Rule : " + scheduled_rule.Name + " , Model不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+      if (reply.OpenAi.Prompt == "") {
+        ElMessage({
+          message: "Rule : " + scheduled_rule.Name + " , Prompt不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+    }
+  }
+
+  scheduled_rule.Id = uuidv4()
+  let config: String = JSON.stringify(scheduled_rule)
+  scheduled_rules.value = JSON.parse(await invoke("create_scheduled_rule", {config: config}));
+  scheduled_rule.Id = ""
+  scheduled_rule.Name = ""
+  scheduled_rule.Group = groupDefault
+  scheduled_rule.Cron = ""
+  scheduled_rule.Reply = []
+  scheduled_rule.Status = false
+
+  scheduledRuleCreateVisible.value = false
   ElMessage({
     message: "Rule : " + name + " , 创建成功 .",
     type: 'success',
@@ -192,36 +296,45 @@ const getGroups = computed(() =>
 )
 
 const getRules = computed(() =>
-    rules.value.filter(
+    auto_reply_rules.value.filter(
         (data) =>
-            !ruleSearch.value ||
-            data.Name.toLowerCase().includes(ruleSearch.value.toLowerCase())
+            !autoReplyRuleSearch.value ||
+            data.Name.toLowerCase().includes(autoReplyRuleSearch.value.toLowerCase())
     )
 )
 
-const getTimedRules = computed(() =>
-    timed_rules.value.filter(
+const getScheduledRules = computed(() =>
+    scheduled_rules.value.filter(
         (data) =>
-            !ruleSearch.value ||
-            data.Name.toLowerCase().includes(timedRuleSearch.value.toLowerCase())
+            !autoReplyRuleSearch.value ||
+            data.Name.toLowerCase().includes(scheduledRuleSearch.value.toLowerCase())
     )
 )
 
 const groupTable = ref<TableInstance>()
-const ruleTable = ref<TableInstance>()
-const timedRuleTable = ref<TableInstance>()
+const autoReplyRuleTable = ref<TableInstance>()
+const scheduledRuleTable = ref<TableInstance>()
 const openAiTable = ref<TableInstance>()
 const groupSearch = ref("")
-const ruleSearch = ref("")
-const timedRuleSearch = ref("")
+const autoReplyRuleSearch = ref("")
+const scheduledRuleSearch = ref("")
 const openAiSearch = ref("")
 const activeName = ref("1")
 
 const delGroup = async function (_: number, row: Group) {
-  for (let rule of rules.value) {
-    if (rule.Group == row.Id) {
+  for (let rule of auto_reply_rules.value) {
+    if (auto_reply_rule.Group.Id == row.Id) {
       ElMessage({
-        message: "Group : " + row.Name + " , 已被Rule : " + rule.Name + "引用 , 请先删除规则 .",
+        message: "Group : " + row.Name + " , 已被AutoRule : " + rule.Name + "引用 , 请先删除规则 .",
+        type: 'warning',
+      })
+      return
+    }
+  }
+  for (let rule of scheduled_rules.value) {
+    if (auto_reply_rule.Group.Id == row.Id) {
+      ElMessage({
+        message: "Group : " + row.Name + " , 已被ScheduledRule : " + rule.Name + "引用 , 请先删除规则 .",
         type: 'warning',
       })
       return
@@ -234,33 +347,43 @@ const delGroup = async function (_: number, row: Group) {
   })
 }
 
-// const updateGroup = async function (_: number, row: Group) {
-//   groups.value = JSON.parse(await invoke("update_group", {id: row.Id})) as Group[]
-//   ElMessage({
-//     message: '人群包:' + row.Name + ',更新成功.',
-//     type: 'success',
-//   })
-// }
-
-const delRule = async function (_: number, row: Rule) {
-  rules.value = JSON.parse(await invoke("del_rule", {id: row.Id})) as Rule[]
+const delAutoReplyRule = async function (_: number, row: AutoReplyRule) {
+  auto_reply_rules.value = JSON.parse(await invoke("del_auto_reply_rule", {id: row.Id})) as AutoReplyRule[]
   ElMessage({
     message: "Rule : " + row.Name + " , 删除成功 .",
     type: 'success',
   })
 }
 
-const updateRuleStatus = async function (_: number, row: Rule) {
-  row.Status = row.Status == "Running" ? "Stop" : "Running"
-  let config = JSON.stringify(row)
-  rules.value = JSON.parse(await invoke("update_rule", {config: config}))
+const delScheduledRule = async function (_: number, row: ScheduledRule) {
+  scheduled_rules.value = JSON.parse(await invoke("del_scheduled_rule", {id: row.Id})) as ScheduledRule[]
   ElMessage({
-    message: "Rule : " + row.Name + " , 已" + (row.Status == "Running" ? "启用" : "停止") + " .",
+    message: "Rule : " + row.Name + " , 删除成功 .",
     type: 'success',
   })
 }
 
-const updateRule = async function (row: Rule) {
+const updateAutoReplyStatus = async function (_: number, row: AutoReplyRule) {
+  let config = JSON.stringify(row)
+  auto_reply_rules.value = JSON.parse(await invoke("update_auto_reply_rule", {config: config}))
+
+  ElMessage({
+    message: "Rule : " + row.Name + " , 已" + (row.Status ? "启用" : "停止") + " .",
+    type: row.Status ? 'success' : 'warning',
+  })
+}
+
+const updateScheduledRuleStatus = async function (_: number, row: ScheduledRule) {
+  let config = JSON.stringify(row)
+  auto_reply_rules.value = JSON.parse(await invoke("update_scheduled_rule", {config: config}))
+
+  ElMessage({
+    message: "Rule : " + row.Name + " , 已" + (row.Status ? "启用" : "停止") + " .",
+    type: row.Status ? 'success' : 'warning',
+  })
+}
+
+const updateAutoReplyRule = async function (row: AutoReplyRule) {
   if (row.Name == "") {
     ElMessage({
       message: "Rule名称不能为空 .",
@@ -268,7 +391,7 @@ const updateRule = async function (row: Rule) {
     })
     return
   }
-  if (row.Group == "") {
+  if (row.Group.Id == "") {
     ElMessage({
       message: "Rule : " + row.Name + " , 人群包不能为空 .",
       type: 'warning',
@@ -283,36 +406,141 @@ const updateRule = async function (row: Rule) {
     })
     return
   }
-  ruleEditVisible.value = false
+  for (let reply of row.Reply) {
+    if (reply.ReplyType == "Template") {
+      if (reply.Template.Content == "") {
+        ElMessage({
+          message: "Rule : " + auto_reply_rule.Name + " , 回复模板不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+    } else {
+      if (reply.OpenAi.Id == "") {
+        ElMessage({
+          message: "Rule : " + auto_reply_rule.Name + " , Model不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+    }
+  }
+  autoReplyRuleEditVisible.value = false
   let config = JSON.stringify(row)
-  rules.value = JSON.parse(await invoke("update_rule", {config: config}))
+  auto_reply_rules.value = JSON.parse(await invoke("update_auto_reply_rule", {config: config}))
   ElMessage({
     message: "Rule : " + row.Name + " , 已更新 .",
     type: 'success',
   })
 }
 
-const cancelCreateRule = async function () {
-  ruleCreateVisible.value = false
-  rule.Id = ""
-  rule.Name = ""
-  rule.Group = ""
-  rule.Reply = []
-  rule.Status = "stop"
-  // rules.value = JSON.parse(await invoke("get_rules", {})) as Rule[];
+const updateScheduledRule = async function (row: ScheduledRule) {
+  if (row.Name == "") {
+    ElMessage({
+      message: "Rule名称不能为空 .",
+      type: 'warning',
+    })
+    return
+  }
+  if (row.Group.Id == "") {
+    ElMessage({
+      message: "Rule : " + row.Name + " , 人群包不能为空 .",
+      type: 'warning',
+    })
+    return
+  }
+  if (scheduled_rule.Cron == "") {
+    ElMessage({
+      message: "Rule : " + scheduled_rule.Cron + " , Cron表达式不能为空 .",
+      type: 'warning',
+    })
+    return
+  }
+  if (!validateCronExpression(scheduled_rule.Cron)) {
+    ElMessage({
+      message: "Rule : " + scheduled_rule.Cron + " , Cron表达式不正确 .",
+      type: 'warning',
+    })
+    return
+  }
+
+  if (row.Reply.length == 0) {
+    ElMessage({
+      message: "Rule : " + row.Name + " , 回复列表为空 .",
+      type: 'warning',
+    })
+    return
+  }
+  for (let reply of row.Reply) {
+    if (reply.ReplyType == "Template") {
+      if (reply.Template.Content == "") {
+        ElMessage({
+          message: "Rule : " + auto_reply_rule.Name + " , 消息内容不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+    } else {
+      if (reply.OpenAi.Id == "") {
+        ElMessage({
+          message: "Rule : " + auto_reply_rule.Name + " , Model不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+      if (reply.OpenAi.Prompt == "") {
+        ElMessage({
+          message: "Rule : " + auto_reply_rule.Name + " , Prompt不能为空 .",
+          type: 'warning',
+        })
+        return
+      }
+    }
+  }
+  scheduledRuleEditVisible.value = false
+  let config = JSON.stringify(row)
+  scheduled_rules.value = JSON.parse(await invoke("update_scheduled_rule", {config: config}))
+  ElMessage({
+    message: "Rule : " + row.Name + " , 已更新 .",
+    type: 'success',
+  })
 }
+
+const cancelCreateAutoReplyRule = async function () {
+  autoReplyRuleCreateVisible.value = false
+  auto_reply_rule.Id = ""
+  auto_reply_rule.Name = ""
+  auto_reply_rule.Group = groupDefault
+  auto_reply_rule.Reply = []
+  auto_reply_rule.Status = false
+}
+
+const cancelCreateScheduledRule = async function () {
+  scheduledRuleCreateVisible.value = false
+  scheduled_rule.Id = ""
+  scheduled_rule.Cron = ""
+  scheduled_rule.Name = ""
+  scheduled_rule.Group = groupDefault
+  scheduled_rule.Reply = []
+  scheduled_rule.Status = false
+}
+
 
 const cancelCreateOpenAi = async function () {
   openAiCreateVisible.value = false
   openai.Name = ""
   openai.Id = ""
   openai.Token = ""
-  // rules.value = JSON.parse(await invoke("get_rules", {})) as Rule[];
 }
 
-const cancelEditRule = async function () {
-  ruleEditVisible.value = false
-  rules.value = JSON.parse(await invoke("get_rules", {})) as Rule[];
+const cancelEditAutoReplyRule = async function () {
+  autoReplyRuleEditVisible.value = false
+  auto_reply_rules.value = JSON.parse(await invoke("get_auto_reply_rules", {})) as AutoReplyRule[];
+}
+
+const cancelEditScheduledRule = async function () {
+  scheduledRuleEditVisible.value = false
+  scheduled_rules.value = JSON.parse(await invoke("get_scheduled_rules", {})) as ScheduledRule[];
 }
 
 const cancelEditOpenAi = async function () {
@@ -347,17 +575,24 @@ const groupDefault: Group = {
 
 const group = reactive<Group>(groupDefault)
 
-const ruleDefault: Rule = {
+const autoReplyRuleDefault: AutoReplyRule = {
   Id: "",
   Name: "",
-  Group: "",
+  Group: groupDefault,
   Reply: [],
-  Status: "stop"
+  Status: false
 }
 
-const rule = reactive<Rule>(ruleDefault)
+const templateDefault: Template = {
+  Keywords: [],
+  Content: "",
+  InputVisible: false,
+  Keyword: "",
+}
 
-const createKeyword = (index: number, row: Rule) => {
+const auto_reply_rule = reactive<AutoReplyRule>(autoReplyRuleDefault)
+
+const createKeyword = (index: number, row: AutoReplyRule) => {
   if (row.Reply[index].Template.Keyword == "") {
     row.Reply[index].Template.InputVisible = false
     return
@@ -367,35 +602,30 @@ const createKeyword = (index: number, row: Rule) => {
   row.Reply[index].Template.InputVisible = false
 }
 
-const deleteKeyword = (index: number, row: Rule, keyword: string) => {
+const deleteKeyword = (index: number, row: AutoReplyRule, keyword: string) => {
   row.Reply[index].Template.Keywords.splice(row.Reply[index].Template.Keywords.indexOf(keyword), 1);
 }
 
-const createReply = (row: Rule) => {
+const createReply = (row: AutoReplyRule | ScheduledRule) => {
   row.Reply.push({
     ReplyType: "Template",
-    Template: {
-      Keywords: [],
-      Content: "",
-      InputVisible: false,
-      Keyword: "",
-    },
-    OpenAi: "",
+    Template: templateDefault,
+    OpenAi: openaiDefault,
   })
 }
 
-const deleteReply = (index: number, row: Rule) => {
+const deleteReply = (index: number, row: AutoReplyRule | ScheduledRule) => {
   row.Reply.splice(index, 1)
 }
 
 // const Keyword_input = ref()
 
-const showKeywordInput = (index: number, row: Rule) => {
+const showKeywordInput = (index: number, row: AutoReplyRule) => {
   row.Reply[index].Template.InputVisible = true
 }
 
-const ruleEditVisible = ref(false)
-const timedRuleEditVisible = ref(false)
+const autoReplyRuleEditVisible = ref(false)
+const scheduledRuleEditVisible = ref(false)
 const openAiEditVisible = ref(false)
 
 
@@ -490,12 +720,34 @@ async function createOpenAi() {
   )
 }
 
+
+function validateCronExpression(expr: string) {
+  try {
+    cronParser.parse(expr)
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function delOpenAi(_: number, row: OpenAi) {
-  for (let rule of rules.value) {
+  for (let rule of auto_reply_rules.value) {
     for (let reply of rule.Reply) {
-      if (reply.ReplyType == "OpenAi" && reply.OpenAi == row.Id) {
+      if (reply.ReplyType == "OpenAi" && reply.OpenAi.Id == row.Id) {
         ElMessage({
-          message: "OpenAi : " + row.Name + " , 已被Rule : " + rule.Name + "引用 , 请先删除规则 .",
+          message: "OpenAi : " + row.Name + " , 已被AutoReplyRule : " + rule.Name + "引用 , 请先删除规则 .",
+          type: 'success',
+        })
+        return
+      }
+    }
+  }
+
+  for (let rule of scheduled_rules.value) {
+    for (let reply of rule.Reply) {
+      if (reply.ReplyType == "OpenAi" && reply.OpenAi.Id == row.Id) {
+        ElMessage({
+          message: "OpenAi : " + row.Name + " , 已被ScheduledRule : " + rule.Name + "引用 , 请先删除规则 .",
           type: 'success',
         })
         return
@@ -551,35 +803,29 @@ async function openAiTest(_: number, row: OpenAi) {
   )
 }
 
-timed_rules.value = [
-  {
-    Content: ["服务", "护肤"],
-    Cron: "",
-    Group: "",
-    Id: "",
-    Name: "",
-    Status: ""
-  }
-]
-
-const timed_rule = reactive<TimedRule>({
-  Content: [], Cron: "", Group: "", Id: "", Name: "", Status: ""
-
+const scheduled_rule = reactive<ScheduledRule>({
+  Reply: [], Cron: "", Group: groupDefault, Id: "", Name: "", Status: false
 })
-
-const groupCreateVisible = ref<boolean>(false)
-
-const edit_rule = reactive<Rule>(ruleDefault)
 
 const edit_openai = reactive<OpenAi>(openaiDefault)
 
-const editRule = (row: Rule) => {
-  edit_rule.Id = row.Id
-  edit_rule.Name = row.Name
-  edit_rule.Group = row.Group
-  edit_rule.Reply = row.Reply
-  edit_rule.Status = row.Status
-  ruleEditVisible.value = true
+const editRule = (row: AutoReplyRule) => {
+  auto_reply_rule.Id = row.Id
+  auto_reply_rule.Name = row.Name
+  auto_reply_rule.Group = row.Group
+  auto_reply_rule.Reply = row.Reply
+  auto_reply_rule.Status = row.Status
+  autoReplyRuleEditVisible.value = true
+}
+
+const editScheduledRule = (row: ScheduledRule) => {
+  scheduled_rule.Id = row.Id
+  scheduled_rule.Name = row.Name
+  scheduled_rule.Cron = row.Cron
+  scheduled_rule.Group = row.Group
+  scheduled_rule.Reply = row.Reply
+  scheduled_rule.Status = row.Status
+  scheduledRuleEditVisible.value = true
 }
 
 const editOpenAi = (row: OpenAi) => {
@@ -644,7 +890,6 @@ const editOpenAi = (row: OpenAi) => {
               :header-cell-style="{background: 'rgb(246,247,251)'}"
               empty-text="暂无数据"
               style="min-width: 600px"
-              border
           >
             <el-table-column label="名称" prop="Name" min-width="20%" show-overflow-tooltip></el-table-column>
             <el-table-column label="联系人" min-width="50%" show-overflow-tooltip>
@@ -685,10 +930,7 @@ const editOpenAi = (row: OpenAi) => {
             </el-table-column>
           </el-table>
         </div>
-        <!--        <el-button type="success" style="width: 100%" @click="groupCreateVisible=true">新建人群包</el-button>-->
-        <!--        <el-drawer v-model="groupCreateVisible" size="50%" style="padding:40px 10px 40px 50px" :show-mask="false" append-to-body>-->
 
-        <!--        </el-drawer>-->
 
       </el-collapse-item>
       <el-collapse-item title="大模型配置" name="2" :icon="CaretRight">
@@ -708,7 +950,6 @@ const editOpenAi = (row: OpenAi) => {
               :header-cell-style="{background: 'rgb(246,247,251)'}"
               max-height="400px"
               empty-text="暂无数据"
-              border
           >
             <el-table-column prop="Name" label="名称" min-width="15%" show-overflow-tooltip>
             </el-table-column>
@@ -862,14 +1103,13 @@ const editOpenAi = (row: OpenAi) => {
         </template>
         <div class="table-container">
           <el-table
-              ref="ruleTable"
+              ref="autoReplyRuleTable"
               :data="getRules"
               max-height="500px"
               :header-cell-style="{background: 'rgb(246,247,251)'}"
               highlight-current-row
               empty-text="暂无数据"
               style="min-width: 600px"
-              border
           >
             <el-table-column type="expand">
               <template #default="scope">
@@ -878,7 +1118,6 @@ const editOpenAi = (row: OpenAi) => {
                     :data="scope.row.Reply"
                     :header-cell-style="{background: 'rgb(246,247,251)'}"
                     highlight-current-row
-                    border
                 >
                   <el-table-column label="回复类型" min-width="1" show-overflow-tooltip>
                     <template #default="scope">
@@ -897,7 +1136,7 @@ const editOpenAi = (row: OpenAi) => {
                   <el-table-column label="AI Model" min-width="2" show-overflow-tooltip>
                     <template #default="scope">
                       <el-tag type="primary" v-if="scope.row.ReplyType=='AI'">{{
-                          getOpenAiName(scope.row.OpenAi)
+                          getOpenAiName(scope.row.OpenAi.Id)
                         }}
                       </el-tag>
                     </template>
@@ -908,30 +1147,35 @@ const editOpenAi = (row: OpenAi) => {
             <el-table-column label="名称" prop="Name" min-width="1" show-overflow-tooltip></el-table-column>
             <el-table-column label="人群包" min-width="1" show-overflow-tooltip>
               <template #default="scope">
-                {{ getGroupName(scope.row.Group) }}
+                {{ getGroupName(scope.row.Group.Id) }}
               </template>
             </el-table-column>
             <el-table-column label="状态" min-width="1" show-overflow-tooltip>
               <template #default="scope">
-                <el-tag :type="scope.row.Status=='Running'?'success':'danger'">
-                  {{ scope.row.Status == 'Running' ? '启用' : '停止' }}
-                </el-tag>
+                <!--                <el-tag :type="scope.row.Status=='Running'?'success':'danger'">-->
+                <!--                  {{ scope.row.Status == 'Running' ? '启用' : '停止' }}-->
+                <!--                </el-tag>-->
+                <el-switch
+                    v-model="scope.row.Status"
+                    style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949"
+                    @change="updateAutoReplyStatus(scope.$index, scope.row)"
+                />
               </template>
             </el-table-column>
             <el-table-column align="right" min-width="1">
               <template #header>
-                <el-input v-model="ruleSearch" size="small" placeholder="搜索"/>
+                <el-input v-model="autoReplyRuleSearch" size="small" placeholder="搜索"/>
               </template>
               <template #default="scope">
-                <div style="margin-bottom: 2px">
-                  <el-button
-                      size="small"
-                      :type="scope.row.Status == 'Running' ? 'danger':'success'"
-                      @click="updateRuleStatus(scope.$index, scope.row)"
-                  >
-                    {{ scope.row.Status == "Running" ? "停止" : "启用" }}
-                  </el-button>
-                </div>
+                <!--                <div style="margin-bottom: 2px">-->
+                <!--                  <el-button-->
+                <!--                      size="small"-->
+                <!--                      :type="scope.row.Status ? 'danger':'success'"-->
+                <!--                      @click="updateAutoReplyStatus(scope.$index, scope.row)"-->
+                <!--                  >-->
+                <!--                    {{ scope.row.Status ? "停止" : "启用" }}-->
+                <!--                  </el-button>-->
+                <!--                </div>-->
                 <div style="margin-bottom: 2px">
                   <el-button
                       size="small"
@@ -942,12 +1186,12 @@ const editOpenAi = (row: OpenAi) => {
                   </el-button>
                 </div>
 
-                <!--              <el-dialog title="编辑规则" v-model="ruleEditVisible" @close="cancelEditRule" style="padding: 40px 50px">-->
+                <!--              <el-dialog title="编辑规则" v-model="autoReplyRuleEditVisible" @close="cancelEditAutoReplyRule" style="padding: 40px 50px">-->
                 <div style="margin-bottom: 2px">
                   <el-button
                       size="small"
                       type="danger"
-                      @click="delRule(scope.$index, scope.row)"
+                      @click="delAutoReplyRule(scope.$index, scope.row)"
                   >
                     删除
                   </el-button>
@@ -957,28 +1201,28 @@ const editOpenAi = (row: OpenAi) => {
             </el-table-column>
           </el-table>
         </div>
-        <el-button type="success" style="width: 100%" @click="ruleCreateVisible=true">新建规则</el-button>
-        <el-drawer title="新建规则" v-model="ruleCreateVisible" @close="cancelCreateRule"
+        <el-button type="success" style="width: 100%" @click="autoReplyRuleCreateVisible=true">新建规则</el-button>
+        <el-drawer title="新建规则" v-model="autoReplyRuleCreateVisible" @close="cancelCreateAutoReplyRule"
                    size="50%"
                    style="padding: 40px 10px 40px 50px" append-to-body>
-          <el-form :model="rule" label-width="auto" style="max-width: 600px">
+          <el-form :model="auto_reply_rule" label-width="auto" style="max-width: 600px">
             <el-form-item label="规则名称" label-position="left">
-              <el-input v-model="rule.Name" placeholder="请输入规则名称"/>
+              <el-input v-model="auto_reply_rule.Name" placeholder="请输入规则名称"/>
             </el-form-item>
             <el-form-item label="人群包" label-position="left">
-              <el-select v-model="rule.Group" placeholder="请选择人群包">
+              <el-select v-model="auto_reply_rule.Group.Id" placeholder="请选择人群包">
                 <template v-for="group in groups">
                   <el-option :label="group.Name" :value="group.Id"/>
                 </template>
               </el-select>
             </el-form-item>
             <el-form-item>
-              <el-button type="success" @click="createReply(rule)"
+              <el-button type="success" @click="createReply(auto_reply_rule)"
                          size="small">
                 新增回复
               </el-button>
             </el-form-item>
-            <template v-for="(reply,index) in rule.Reply">
+            <template v-for="(reply,index) in auto_reply_rule.Reply">
               <el-form-item label="回复类型" label-position="left">
                 <el-radio-group v-model="reply.ReplyType">
                   <el-radio value="Template">模板文案</el-radio>
@@ -992,7 +1236,7 @@ const editOpenAi = (row: OpenAi) => {
                     closable
                     :disable-transitions="false"
                     style="margin-right: 10px;"
-                    @close="deleteKeyword(index,rule,keyword)">
+                    @close="deleteKeyword(index,auto_reply_rule,keyword)">
                   {{ keyword }}
                 </el-tag>
 
@@ -1001,12 +1245,12 @@ const editOpenAi = (row: OpenAi) => {
                     v-if="reply.Template.InputVisible"
                     v-model="reply.Template.Keyword"
                     size="small"
-                    @keyup.enter.native="createKeyword(index,rule)"
-                    @blur="createKeyword(index,rule)"
+                    @keyup.enter.native="createKeyword(index,auto_reply_rule)"
+                    @blur="createKeyword(index,auto_reply_rule)"
                 >
                 </el-input>
                 <el-button v-else class="keyword-button" size="small"
-                           @click="showKeywordInput(index,rule)">+ 关键字
+                           @click="showKeywordInput(index,auto_reply_rule)">+ 关键字
                 </el-button>
 
               </el-form-item>
@@ -1015,14 +1259,14 @@ const editOpenAi = (row: OpenAi) => {
               </el-form-item>
 
               <el-form-item label="AI模型" v-if="reply.ReplyType=='AI'" label-position="left">
-                <el-select v-model="reply.OpenAi" placeholder="请选择模型">
+                <el-select v-model="reply.OpenAi.Id" placeholder="请选择模型">
                   <template v-for="openai in openai_list">
                     <el-option :label="openai.Name" :value="openai.Id"/>
                   </template>
                 </el-select>
               </el-form-item>
               <el-form-item>
-                <el-button type="danger" @click="deleteReply(index,rule)"
+                <el-button type="danger" @click="deleteReply(index,auto_reply_rule)"
                            size="small">
                   删除回复
                 </el-button>
@@ -1030,30 +1274,31 @@ const editOpenAi = (row: OpenAi) => {
             </template>
           </el-form>
           <div slot="footer" class="dialog-footer">
-            <el-button @click="cancelCreateRule">取消</el-button>
-            <el-button type="primary" @click="createRule">确定</el-button>
+            <el-button @click="cancelCreateAutoReplyRule">取消</el-button>
+            <el-button type="primary" @click="createAutoReplyRule">确定</el-button>
           </div>
         </el-drawer>
-        <el-drawer title="编辑规则" v-model="ruleEditVisible" size="50%" @close="cancelEditRule" append-to-body
+        <el-drawer title="编辑规则" v-model="autoReplyRuleEditVisible" size="50%" @close="cancelEditAutoReplyRule"
+                   append-to-body
                    style="padding: 40px 10px 40px 50px">
-          <el-form :model="edit_rule" label-width="auto" style="max-width: 600px">
+          <el-form :model="auto_reply_rule" label-width="auto" style="max-width: 600px">
             <el-form-item label="规则名称" label-position="left">
-              <el-input v-model="edit_rule.Name" placeholder="请输入规则名称"/>
+              <el-input v-model="auto_reply_rule.Name" disabled placeholder="请输入规则名称"/>
             </el-form-item>
             <el-form-item label="人群包" label-position="left">
-              <el-select v-model="edit_rule.Group" placeholder="请选择人群包">
+              <el-select v-model="auto_reply_rule.Group.Id" placeholder="请选择人群包">
                 <template v-for="group in groups">
                   <el-option :label="group.Name" :value="group.Id"/>
                 </template>
               </el-select>
             </el-form-item>
             <el-form-item>
-              <el-button type="success" @click="createReply(edit_rule)"
+              <el-button type="success" @click="createReply(auto_reply_rule)"
                          size="small">
                 新增回复
               </el-button>
             </el-form-item>
-            <template v-for="(reply,index) in edit_rule.Reply">
+            <template v-for="(reply,index) in auto_reply_rule.Reply">
               <el-form-item label="回复类型" label-position="left">
                 <el-radio-group v-model="reply.ReplyType">
                   <el-radio value="Template">模板文案</el-radio>
@@ -1067,7 +1312,7 @@ const editOpenAi = (row: OpenAi) => {
                     closable
                     :disable-transitions="false"
                     style="margin-right: 10px;"
-                    @close="deleteKeyword(index,edit_rule,keyword)">
+                    @close="deleteKeyword(index,auto_reply_rule,keyword)">
                   {{ keyword }}
                 </el-tag>
 
@@ -1076,12 +1321,12 @@ const editOpenAi = (row: OpenAi) => {
                     v-if="reply.Template.InputVisible"
                     v-model="reply.Template.Keyword"
                     size="small"
-                    @keyup.enter.native="createKeyword(index,edit_rule)"
-                    @blur="createKeyword(index,edit_rule)"
+                    @keyup.enter.native="createKeyword(index,auto_reply_rule)"
+                    @blur="createKeyword(index,auto_reply_rule)"
                 >
                 </el-input>
                 <el-button v-else class="keyword-button" size="small"
-                           @click="showKeywordInput(index,edit_rule)">+ 关键字
+                           @click="showKeywordInput(index,auto_reply_rule)">+ 关键字
                 </el-button>
 
               </el-form-item>
@@ -1090,14 +1335,14 @@ const editOpenAi = (row: OpenAi) => {
               </el-form-item>
 
               <el-form-item label="AI模型" v-if="reply.ReplyType=='AI'" label-position="left">
-                <el-select v-model="reply.OpenAi" placeholder="请选择模型">
+                <el-select v-model="reply.OpenAi.Id" placeholder="请选择模型">
                   <template v-for="openai in openai_list">
                     <el-option :label="openai.Name" :value="openai.Id"/>
                   </template>
                 </el-select>
               </el-form-item>
               <el-form-item>
-                <el-button type="danger" @click="deleteReply(index,edit_rule)"
+                <el-button type="danger" @click="deleteReply(index,auto_reply_rule)"
                            size="small">
                   删除回复
                 </el-button>
@@ -1105,8 +1350,8 @@ const editOpenAi = (row: OpenAi) => {
             </template>
           </el-form>
           <div slot="footer" class="dialog-footer">
-            <el-button @click="cancelEditRule">取消</el-button>
-            <el-button type="primary" @click="updateRule(edit_rule)">确定</el-button>
+            <el-button @click="cancelEditAutoReplyRule">取消</el-button>
+            <el-button type="primary" @click="updateAutoReplyRule(auto_reply_rule)">确定</el-button>
           </div>
           <!--              </el-dialog>-->
         </el-drawer>
@@ -1119,11 +1364,10 @@ const editOpenAi = (row: OpenAi) => {
           </el-icon>
           &nbsp;定时消息规则管理
         </template>
-        <el-tag type="danger">暂未支持</el-tag>
         <div class="table-container">
           <el-table
-              ref="timedRuleTable"
-              :data="getTimedRules"
+              ref="scheduledRuleTable"
+              :data="getScheduledRules"
               max-height="500px"
               :header-cell-style="{background: 'rgb(246,247,251)'}"
               highlight-current-row
@@ -1133,18 +1377,37 @@ const editOpenAi = (row: OpenAi) => {
           >
             <el-table-column type="expand">
               <template #default="scope">
-                <div style="padding: 5px 10px">
-                  <div><b>随机消息候选池</b></div>
-                  <div v-for="(content,index) in scope.row.Content">
-                    {{ index + 1 }}. {{ content }}
-                  </div>
-                </div>
+
+                <el-table
+                    :data="scope.row.Reply"
+                    :header-cell-style="{background: 'rgb(246,247,251)'}"
+                    highlight-current-row
+                >
+                  <el-table-column label="消息类型" min-width="1" show-overflow-tooltip>
+                    <template #default="scope">
+                      <el-tag type="primary">{{ scope.row.ReplyType == 'Template' ? '模板' : 'AI' }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="模板内容" min-width="3" prop="Template.Content"
+                                   show-overflow-tooltip></el-table-column>
+                  <el-table-column label="AI Model" min-width="2" show-overflow-tooltip>
+                    <template #default="scope">
+                      <el-tag type="primary" v-if="scope.row.ReplyType=='AI'">{{
+                          getOpenAiName(scope.row.OpenAi.Id)
+                        }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="AI Prompt" prop="OpenAi.Prompt" min-width="2"
+                                   show-overflow-tooltip>
+                  </el-table-column>
+                </el-table>
               </template>
             </el-table-column>
             <el-table-column label="名称" prop="Name" min-width="1" show-overflow-tooltip></el-table-column>
             <el-table-column label="人群包" min-width="1" show-overflow-tooltip>
               <template #default="scope">
-                {{ getGroupName(scope.row.Group) }}
+                {{ getGroupName(scope.row.Group.Id) }}
               </template>
             </el-table-column>
             <el-table-column label="时间表达式" min-width="1" show-overflow-tooltip>
@@ -1154,28 +1417,23 @@ const editOpenAi = (row: OpenAi) => {
             </el-table-column>
             <el-table-column label="状态" min-width="1" show-overflow-tooltip>
               <template #default="scope">
-                <el-tag :type="scope.row.Status=='Running'?'success':'danger'">{{ scope.row.Status }}</el-tag>
+                <el-switch
+                    v-model="scope.row.Status"
+                    style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949"
+                    @change="updateScheduledRuleStatus(scope.$index, scope.row)"
+                />
               </template>
             </el-table-column>
             <el-table-column align="right" min-width="1">
               <template #header>
-                <el-input v-model="timedRuleSearch" size="small" placeholder="搜索"/>
+                <el-input v-model="scheduledRuleSearch" size="small" placeholder="搜索"/>
               </template>
               <template #default="scope">
                 <div style="margin-bottom: 2px">
                   <el-button
                       size="small"
-                      :type="scope.row.Status == 'Running' ? 'danger':'success'"
-                      @click="updateRuleStatus(scope.$index, scope.row)"
-                  >
-                    {{ scope.row.Status == "Running" ? "停止" : "启用" }}
-                  </el-button>
-                </div>
-                <div style="margin-bottom: 2px">
-                  <el-button
-                      size="small"
                       type="success"
-                      @click="timedRuleEditVisible = true"
+                      @click="editScheduledRule(scope.row)"
                   >
                     编辑
                   </el-button>
@@ -1184,7 +1442,7 @@ const editOpenAi = (row: OpenAi) => {
                   <el-button
                       size="small"
                       type="danger"
-                      @click="delRule(scope.$index, scope.row)"
+                      @click="delScheduledRule(scope.$index, scope.row)"
                   >
                     删除
                   </el-button>
@@ -1193,7 +1451,125 @@ const editOpenAi = (row: OpenAi) => {
             </el-table-column>
           </el-table>
         </div>
-        <el-button type="success" style="width: 100%" @click="timedRuleCreateVisible=true">新建规则</el-button>
+        <el-button type="success" style="width: 100%" @click="scheduledRuleCreateVisible=true">新建规则</el-button>
+        <el-drawer title="新建规则" v-model="scheduledRuleCreateVisible" @close="cancelCreateScheduledRule"
+                   size="50%"
+                   style="padding: 40px 10px 40px 50px" append-to-body>
+          <el-form :model="scheduled_rule" label-width="auto" style="max-width: 600px">
+            <el-form-item label="规则名称" label-position="left">
+              <el-input v-model="scheduled_rule.Name" placeholder="请输入规则名称"/>
+            </el-form-item>
+            <el-form-item label="人群包" label-position="left">
+              <el-select v-model="scheduled_rule.Group.Id" placeholder="请选择人群包">
+                <template v-for="group in groups">
+                  <el-option :label="group.Name" :value="group.Id"/>
+                </template>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="Cron表达式" label-position="left">
+              <el-input v-model="scheduled_rule.Cron" placeholder="请输入Cron表达式"/>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="success" @click="createReply(scheduled_rule)"
+                         size="small">
+                新增回复
+              </el-button>
+            </el-form-item>
+            <template v-for="(reply,index) in scheduled_rule.Reply">
+              <el-form-item label="消息类型" label-position="left">
+                <el-radio-group v-model="reply.ReplyType">
+                  <el-radio value="Template">模板文案</el-radio>
+                  <el-radio value="AI">AI</el-radio>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="消息内容" v-if="reply.ReplyType=='Template'" label-position="left">
+                <el-input v-model="reply.Template.Content" type="textarea" placeholder="又是元气满满的一天~"/>
+              </el-form-item>
+
+              <el-form-item label="AI Model" v-if="reply.ReplyType=='AI'" label-position="left">
+                <el-select v-model="reply.OpenAi.Id" placeholder="请选择模型">
+                  <template v-for="openai in openai_list">
+                    <el-option :label="openai.Name" :value="openai.Id"/>
+                  </template>
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="AI Prompt" v-if="reply.ReplyType=='AI'" label-position="left">
+                <el-input v-model="reply.OpenAi.Prompt" type="textarea" placeholder="请输入Prompt">
+                </el-input>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="danger" @click="deleteReply(index,scheduled_rule)"
+                           size="small">
+                  删除回复
+                </el-button>
+              </el-form-item>
+            </template>
+          </el-form>
+          <div slot="footer" class="dialog-footer">
+            <el-button @click="cancelCreateScheduledRule">取消</el-button>
+            <el-button type="primary" @click="createScheduledRule">确定</el-button>
+          </div>
+        </el-drawer>
+        <el-drawer title="编辑规则" v-model="scheduledRuleEditVisible" @close="cancelEditScheduledRule"
+                   size="50%"
+                   style="padding: 40px 10px 40px 50px" append-to-body>
+          <el-form :model="scheduled_rule" label-width="auto" style="max-width: 600px">
+            <el-form-item label="规则名称" label-position="left">
+              <el-input v-model="scheduled_rule.Name" disabled placeholder="请输入规则名称"/>
+            </el-form-item>
+            <el-form-item label="人群包" label-position="left">
+              <el-select v-model="scheduled_rule.Group.Id" placeholder="请选择人群包">
+                <template v-for="group in groups">
+                  <el-option :label="group.Name" :value="group.Id"/>
+                </template>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="Cron表达式" label-position="left">
+              <el-input v-model="scheduled_rule.Cron" placeholder="请输入Cron表达式"/>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="success" @click="createReply(scheduled_rule)"
+                         size="small">
+                新增回复
+              </el-button>
+            </el-form-item>
+            <template v-for="(reply,index) in scheduled_rule.Reply">
+              <el-form-item label="消息类型" label-position="left">
+                <el-radio-group v-model="reply.ReplyType">
+                  <el-radio value="Template">模板文案</el-radio>
+                  <el-radio value="AI">AI</el-radio>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="消息内容" v-if="reply.ReplyType=='Template'" label-position="left">
+                <el-input v-model="reply.Template.Content" type="textarea" placeholder="又是元气满满的一天~"/>
+              </el-form-item>
+
+              <el-form-item label="AI Model" v-if="reply.ReplyType=='AI'" label-position="left">
+                <el-select v-model="reply.OpenAi.Id" placeholder="请选择模型">
+                  <template v-for="openai in openai_list">
+                    <el-option :label="openai.Name" :value="openai.Id"/>
+                  </template>
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="AI Prompt" v-if="reply.ReplyType=='AI'" label-position="left">
+                <el-input v-model="reply.OpenAi.Prompt" type="textarea" placeholder="请输入Prompt">
+                </el-input>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="danger" @click="deleteReply(index,scheduled_rule)"
+                           size="small">
+                  删除回复
+                </el-button>
+              </el-form-item>
+            </template>
+          </el-form>
+          <div slot="footer" class="dialog-footer">
+            <el-button @click="cancelEditScheduledRule">取消</el-button>
+            <el-button type="primary" @click="updateScheduledRule(scheduled_rule)">更新</el-button>
+          </div>
+        </el-drawer>
       </el-collapse-item>
       <el-collapse-item title="一键群发" name="5" :icon="CaretRight">
 
