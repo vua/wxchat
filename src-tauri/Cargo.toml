@@ -35,4 +35,5 @@ base64 = "0.13"
 chrono = "0.4.39"
 cron = "0.12.1"
 anyhow = "1.0.95"
+futures = "0.3.31"
 

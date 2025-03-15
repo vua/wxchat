@@ -1,11 +1,14 @@
 use crate::openapi::base::{get_head_img, Base, BaseResponse, User};
 use crate::openapi::rule::GroupService;
 use crate::openapi::tool::time_tool::get_r;
+use futures::future::join_all;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 #[derive(Clone, Debug)]
 pub struct Member {
@@ -161,6 +164,7 @@ impl Member {
 
         let resp: ContactResponse = from_str(&data).unwrap();
         let mut handles = vec![];
+        let semaphore = Arc::new(Semaphore::new(10));
 
         for member in resp.member_list {
             let client = cli.clone();
@@ -170,7 +174,10 @@ impl Member {
             self.member_map
                 .insert(member.user_name.to_string(), member.clone());
             self.member_list.push(member);
+            let permit = semaphore.clone().acquire_owned().await?;
+            // get_head_img(client, &_base, username.as_str(), pyquanpin.as_str()).await.unwrap_or_default();
             handles.push(tokio::spawn(async move {
+                let _permit = permit;
                 if let Err(e) =
                     get_head_img(client, &_base, username.as_str(), pyquanpin.as_str()).await
                 {
@@ -180,9 +187,10 @@ impl Member {
         }
 
         self.member_list.push(ContactMember::from(&base.user));
-        for handle in handles {
-            handle.await?;
-        }
+        // for handle in handles {
+        //     handle.await?;
+        // }
+        join_all(handles).await;
 
         GroupService::new().update_by_member(&self.member_list)?;
         Ok(self)
