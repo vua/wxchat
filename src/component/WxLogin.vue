@@ -5,14 +5,11 @@ import {globalStore, Member, User} from "../stores/global_store.ts";
 import {storeToRefs} from "pinia";
 import {ElLoading} from 'element-plus';
 import 'element-plus/theme-chalk/el-loading.css'
-import {LoadingInstance} from "element-plus/es/components/loading/src/loading";
 import {Picture as IconPicture} from '@element-plus/icons-vue'
 import * as path from '@tauri-apps/api/path';
 
 const store = globalStore()
-const {loading_completed, members, user, root} = storeToRefs(store)
-
-const login_code = ref("")
+const {homepage_enable, members, user, root, logout, expired_time} = storeToRefs(store)
 
 let imgSrc = ref("");
 
@@ -25,19 +22,16 @@ getImgSrc()
 
 const timestamp = ref(new Date().getTime());
 
-const qr_code_ready = ref(false)
-
 async function refresh() {
-  qr_code_ready.value = false
   await invoke("refresh", {});
   timestamp.value = new Date().getTime()
   console.log("更新微信登录二维码")
-  qr_code_ready.value = true
 }
 
-async function check() {
-  login_code.value = await invoke("check", {});
-  console.log("登录状态码:", login_code.value)
+async function login_check() {
+  let code = await invoke("login_check", {}) as string;
+  console.log("登录状态码:", code)
+  return code
 }
 
 async function load_members() {
@@ -50,75 +44,149 @@ async function load_user() {
   console.log("加载个人信息")
 }
 
-async function start_listen() {
-  await invoke("listen", {})
-  console.log("开启监听")
+async function load_auth() {
+  expired_time.value = JSON.parse(await invoke("get_auth", {})) as number;
+  console.log("加载权限信息")
+}
+
+async function sync_check() {
+  console.log("开始执行 sync_check");
+  try {
+    const result = await Promise.race([
+      invoke("sync_check", {}).then(res => {
+        console.log("invoke 调用成功:", res);
+        return res;
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => {
+          console.log("触发超时");
+          reject(new Error('sync_check timeout'))
+        }, 15000)
+      })
+    ]) as boolean;
+    console.log("sync_check 执行完成:", result);
+    return result;
+  } catch (error) {
+    console.log("sync_check 捕获到错误:", error);
+    throw error;
+  }
+}
+
+const sync_check_handler = function () {
+  sync_check().then(async (status: boolean) => {
+    if (!logout.value) { // 也没啥大用
+      return
+    }
+    if (!status) {
+      homepage_enable.value = false;
+    } else {
+      setTimeout(sync_check_handler, 1000);
+    }
+  }).catch(error => {
+    console.log(`sync_check 请求失败:`, error);
+    setTimeout(sync_check_handler, 10000);
+  });
 }
 
 
-let loading: LoadingInstance;
+refresh().then(async () => {
+  console.log("登录页面加载完成")
+  login_check_handler()
+})
 
-let enter = false;
-
-refresh()
-
-
-let timer = setInterval(function () {
-  if (!qr_code_ready.value) {
-    return
-  }
-  check().then(async () => {
-    if (login_code.value == "200") {
-      clearInterval(timer)
-      console.log("清除定时任务")
-      await load_user()
-      await load_members()
-      loading.close()
-      loading_completed.value = true
-      await start_listen()
-    } else if (login_code.value == "201") {
-      if (enter) {
-        return
-      }
-      enter = true
-      loading = ElLoading.service({
+const login_check_handler = function () {
+  login_check().then(async (code: string) => {
+    if (code == "200") {
+      let loading_instance = ElLoading.service({
         lock: true,
         text: "加载中",
         background: 'rgba(0, 0, 0, 0.7)'
       })
+      await load_auth()
+      await load_user()
+      await load_members()
+      loading_instance.close()
+      homepage_enable.value = true
+      sync_check_handler()
+    } else {
+      if (code == "400") {
+        refresh().then(async () => {
+          login_check_handler()
+        })
+        return
+      }
+      setTimeout(login_check_handler, 1000)
     }
-  })
-}, 10000);
+  }).catch(error => {
+    console.log('请求异常，10秒后重试:', error);
+    setTimeout(login_check_handler, 10000); // 失败后延长重试间隔
+  });
+}
 
 </script>
 
 <template>
   <div class="login-container">
-    <div style="margin: 5px">
-      微信扫码登录
+    <div class="banner-area">
+<pre>
+ __      __        _________ .__            __
+/  \    /  \___  __\_   ___ \|  |__ _____ _/  |_
+\   \/\/   /\  \/  /    \  \/|  |  \\__  \\   __\
+ \        /  >    <\     \___|   Y  \/ __ \|  |
+  \__/\  /  /__/\_ \\______  /___|  (____  /__|
+       \/         \/       \/     \/     \/
+
+</pre>
+      <pre style="font-size: 18px">你的微信自动回复助手</pre>
+
     </div>
-    <div class="qr-code">
-      <el-image :src="`${imgSrc}?timestamp=${timestamp}`">
-        <template #error>
-          <div class="image-slot">
-            <el-icon>
-              <IconPicture/>
-            </el-icon>
-          </div>
-        </template>
-      </el-image>
+    <div class="scan-area">
+      <div style="margin: 5px">
+        微信扫码登录
+      </div>
+      <div class="qr-code">
+        <el-image :src="`${imgSrc}?timestamp=${timestamp}`">
+          <template #error>
+            <div class="image-slot">
+              <el-icon>
+                <IconPicture/>
+              </el-icon>
+            </div>
+          </template>
+        </el-image>
+      </div>
     </div>
   </div>
-</template>
+</template>Ç
 
 <style scoped>
 .login-container {
   display: flex;
   justify-content: center;
   align-items: center;
-  flex-direction: column;
+  flex-direction: row;
   width: 100vw;
   height: 100vh;
+}
+
+.banner-area {
+  background-image: linear-gradient(to right, #6DC1F7, #BCF1F2);
+  color: cornsilk;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  height: 100vh;
+  flex: 5;
+}
+
+.scan-area {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  height: 100vh;
+  flex: 4;
 }
 
 .qr-code {

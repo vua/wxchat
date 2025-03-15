@@ -1,3 +1,5 @@
+use crate::openapi::auth::Auth;
+use crate::openapi::base::User;
 use crate::openapi::member::ContactMember;
 use crate::openapi::tool::file_tool;
 use cron::Schedule;
@@ -27,7 +29,6 @@ pub struct OpenAi {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "PascalCase")]
 pub struct OpenAiConfig {
     pub source: String,
     pub url: String,
@@ -374,19 +375,31 @@ impl GroupService {
     }
 }
 
+// if (member_type.value == "1" && (data.VerifyFlag != 0 || data.UserName.startsWith("@@"))) {
+// return false
+// }
+// if (member_type.value == "2" && !data.UserName.startsWith("@@")) {
+// return false
+// }
+// if (member_type.value == "3" && data.VerifyFlag == 0) {
+// return false
+// }
 impl Group {
-    pub fn hit(&self, user_name: &str) -> bool {
+    pub fn hit(&self, to_user: &User, from_user: &ContactMember) -> bool {
         if self.members.len() == 0 {
             match self.id.as_str() {
                 "all" => return true,
-                "all_membership" => return !user_name.starts_with("@@"),
-                "all_account" => return !user_name.starts_with("@@"),
-                "all_classroom" => return user_name.starts_with("@@"),
+                "all_membership" => {
+                    return from_user.user_name.starts_with("@@") || from_user.verify_flag != 0
+                }
+                "all_account" => return !from_user.user_name.starts_with("@@"),
+                "all_classroom" => return from_user.verify_flag == 0,
+                "self" => return to_user.user_name == from_user.user_name,
                 _ => {}
             }
         }
         for member in &self.members {
-            if member.user_name == user_name {
+            if member.user_name == from_user.user_name {
                 return true;
             }
         }
@@ -461,6 +474,35 @@ pub struct AutoReplyRuleService {
     data_path: PathBuf,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct StatusInfo {
+    status_code: i64,
+    status_msg: String,
+}
+
+impl StatusInfo {
+    pub fn new(status_code: i64, status_msg: String) -> StatusInfo {
+        StatusInfo {
+            status_code,
+            status_msg,
+        }
+    }
+    pub fn default() -> StatusInfo {
+        StatusInfo {
+            status_code: 0,
+            status_msg: "".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct SwitchAutoReplyRuleStatusResp {
+    pub rules: Vec<AutoReplyRule>,
+    pub status_info: StatusInfo,
+}
+
 impl AutoReplyRuleService {
     pub fn new() -> AutoReplyRuleService {
         AutoReplyRuleService {
@@ -471,42 +513,57 @@ impl AutoReplyRuleService {
         }
     }
 
-    pub fn create(&mut self, rule: AutoReplyRule) -> io::Result<Vec<AutoReplyRule>> {
+    pub fn create(&self, rule: AutoReplyRule) -> io::Result<Vec<AutoReplyRule>> {
         let mut rules = self.m_get()?;
         rules.push(rule);
         self.write(&rules)?;
         Ok(rules)
     }
 
-    pub fn write(&mut self, rules: &Vec<AutoReplyRule>) -> io::Result<()> {
+    pub fn write(&self, rules: &Vec<AutoReplyRule>) -> io::Result<()> {
         let data = serde_json::to_string(&rules)?;
         fs::write(self.data_path.as_path(), data)?;
         Ok(())
     }
 
-    pub fn m_get(&mut self) -> io::Result<Vec<AutoReplyRule>> {
+    pub fn m_get_with_status_update(&self, auth: &Auth) -> io::Result<Vec<AutoReplyRule>> {
+        let mut data = file_tool::get_or_create_file(self.data_path.as_path())?;
+        if data.is_empty() {
+            data = "[]".to_string();
+        }
+        let mut rules: Vec<AutoReplyRule> = serde_json::from_str(&data)?;
+        if auth.authorize() {
+            return Ok(rules);
+        }
+
+        for rule in rules.iter_mut() {
+            rule.status = false
+        }
+        self.write(&rules)?;
+        Ok(rules)
+    }
+
+    pub fn m_get(&self) -> io::Result<Vec<AutoReplyRule>> {
         let mut data = file_tool::get_or_create_file(self.data_path.as_path())?;
         if data.is_empty() {
             data = "[]".to_string();
         }
         let rules: Vec<AutoReplyRule> = serde_json::from_str(&data)?;
+
         Ok(rules)
     }
 
-    pub fn m_get_running(&mut self) -> io::Result<Vec<AutoReplyRule>> {
+    pub fn m_get_with_group(&self) -> io::Result<Vec<AutoReplyRule>> {
         let mut rules = self.m_get()?;
         let mut group_service = GroupService::new();
         for rule in rules.iter_mut() {
-            if !rule.status {
-                continue;
-            }
             let group = group_service.get(&rule.group.id).unwrap().unwrap();
             rule.group = group;
         }
         Ok(rules)
     }
 
-    pub fn del(&mut self, id: String) -> io::Result<Vec<AutoReplyRule>> {
+    pub fn del(&self, id: String) -> io::Result<Vec<AutoReplyRule>> {
         let mut rules = self.m_get()?;
         let mut find = false;
         let mut index = 0;
@@ -525,7 +582,7 @@ impl AutoReplyRuleService {
         Ok(rules)
     }
 
-    pub fn update(&mut self, rule: AutoReplyRule) -> io::Result<Vec<AutoReplyRule>> {
+    pub fn update(&self, rule: AutoReplyRule) -> Result<Vec<AutoReplyRule>, Box<dyn Error>> {
         let mut rules = self.m_get()?;
 
         for item in rules.iter_mut() {
@@ -536,6 +593,31 @@ impl AutoReplyRuleService {
         }
         self.write(&rules)?;
         Ok(rules)
+    }
+    pub async fn switch_status(
+        &self,
+        id: String,
+        auth: &Auth,
+    ) -> Result<SwitchAutoReplyRuleStatusResp, Box<dyn Error>> {
+        let mut rules = self.m_get()?;
+
+        for item in rules.iter_mut() {
+            if item.id == id {
+                if item.status == false && !auth.authorize() {
+                    return Ok(SwitchAutoReplyRuleStatusResp {
+                        rules,
+                        status_info: StatusInfo::new(-1, auth.message()),
+                    });
+                }
+                item.status = !item.status;
+                break;
+            }
+        }
+        self.write(&rules)?;
+        Ok(SwitchAutoReplyRuleStatusResp {
+            rules,
+            status_info: StatusInfo::default(),
+        })
     }
 }
 

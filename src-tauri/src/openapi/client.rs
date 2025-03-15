@@ -1,12 +1,13 @@
 use reqwest::Client;
 use std::sync::Arc;
-
+use std::time::Duration;
 use reqwest::header::HeaderMap;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
+use reqwest::RequestBuilder;
 
 #[warn(dead_code)]
 pub struct WxOpenapiClient {
-    cli: Client,
+    pub cli: Client,
 }
 
 impl WxOpenapiClient {
@@ -23,15 +24,56 @@ impl WxOpenapiClient {
 
         headers.insert("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0".parse().unwrap());
 
-        WxOpenapiClient {
-            cli: Client::builder()
-                .default_headers(headers)
-                .cookie_provider(cookie_store.clone())
-                .build()
-                .unwrap(),
-        }
+        let client = Client::builder()
+            .default_headers(headers)
+            .cookie_provider(cookie_store.clone())
+            .timeout(Duration::from_secs(15))
+            .connect_timeout(Duration::from_secs(15))
+            // .tcp_keepalive(Some(Duration::from_secs(30)))
+            .pool_idle_timeout(Some(Duration::from_secs(90)))
+            .pool_max_idle_per_host(10)
+            .build()
+            .unwrap();
+
+        WxOpenapiClient { cli: client }
     }
+
     pub fn client(&self) -> Client {
         self.cli.clone()
+    }
+
+    pub async fn request_with_retry<T, F, Fut>(&self, f: F) -> reqwest::Result<T> 
+    where
+        F: Fn(Client) -> Fut,
+        Fut: std::future::Future<Output = reqwest::Result<T>>,
+    {
+        let mut retries = 0;
+        let max_retries = 3;
+        let mut delay = 1;
+
+        loop {
+            match f(self.client()).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    if retries >= max_retries {
+                        return Err(e);
+                    }
+                    println!("请求失败，正在重试 {}/{}...", retries + 1, max_retries);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                    retries += 1;
+                    delay *= 2;
+                }
+            }
+        }
+    }
+}
+
+impl WxOpenapiClient {
+    pub async fn get(&self, url: &str) -> reqwest::Result<reqwest::Response> {
+        self.request_with_retry(|client| client.get(url).send()).await
+    }
+
+    pub async fn post(&self, url: &str) -> reqwest::Result<reqwest::Response> {
+        self.request_with_retry(|client| client.post(url).send()).await
     }
 }

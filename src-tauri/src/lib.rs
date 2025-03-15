@@ -4,10 +4,10 @@ mod executor;
 mod openapi;
 
 use crate::executor::Executor;
+use crate::openapi::auth::Auth;
 use crate::openapi::base::Base;
-use crate::openapi::login::Login;
-use crate::openapi::member::Member;
-use crate::openapi::message::MessageService;
+use crate::openapi::login::{CheckResp, Login};
+use crate::openapi::member::{Member};
 use crate::openapi::rule::{
     AutoReplyRule, AutoReplyRuleService, Group, GroupService, OpenAi, OpenAiConfig,
     OpenAiConfigService, OpenAiService, ScheduledRule, ScheduledRuleService, APPDATA_PATH,
@@ -15,21 +15,21 @@ use crate::openapi::rule::{
 use once_cell::sync::Lazy;
 use openapi::client::WxOpenapiClient;
 use std::env;
+use std::error::Error;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
 use tauri::path::BaseDirectory;
 use tauri::{command, generate_context, Manager, State};
-use tokio::sync::{mpsc, Mutex};
-use tokio::time::timeout;
+use tokio::sync::{Mutex};
 
 struct AppState {
     uuid: String,
     login: bool,
     base: Base,
     member: Member,
+    auth: Auth,
+    client: WxOpenapiClient,
 }
 
 impl AppState {
@@ -39,6 +39,8 @@ impl AppState {
             login: false,
             base: Base::new(),
             member: Member::new(),
+            auth: Auth::new(),
+            client: WxOpenapiClient::new(),
         }
     }
 }
@@ -48,11 +50,16 @@ static WX_CLIENT: Lazy<WxOpenapiClient> = Lazy::new(|| WxOpenapiClient::new());
 #[command]
 async fn refresh(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
     println!("[refresh][main] qr code");
+
     let mut state = state.lock().await;
+    state.client = WxOpenapiClient::new();
     let mut login = Login::new();
-    let uuid = login.get_uuid(WX_CLIENT.client()).await.unwrap();
+    let uuid = login.get_uuid(state.client.client()).await.unwrap();
     state.uuid = uuid.clone();
-    let data = login.get_qr_code(WX_CLIENT.client(), &uuid).await.unwrap();
+    let data = login
+        .get_qr_code(state.client.client(), &uuid)
+        .await
+        .unwrap();
     let mut file = File::create(
         APPDATA_PATH
             .lock()
@@ -67,24 +74,28 @@ async fn refresh(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
 }
 
 #[command]
-async fn check(state: State<'_, Mutex<AppState>>) -> Result<String, ()> {
-    println!("[check][main] check login status");
+async fn login_check(state: State<'_, Mutex<AppState>>) -> Result<String, ()> {
     let mut state = state.lock().await;
+    println!("login_check");
     if state.login {
+        println!("already logged in");
         return Ok("200".to_string());
     }
     let mut login = Login::new();
-    let resp = login.check(WX_CLIENT.client(), &state.uuid).await.unwrap();
-    println!("[check][main] resp={:?}", &resp);
+    let resp = login
+        .check(state.client.client(), &state.uuid)
+        .await
+        .unwrap_or(CheckResp::default());
     if resp.code == "200" {
         state.login = true;
+        println!("successfully logged in");
         let base = Base::new()
-            .init(WX_CLIENT.client(), &resp.redirect_uri)
+            .init(state.client.client(), &resp.redirect_uri)
             .await
             .unwrap();
-
         state.base = base.clone();
     }
+    println!("login check code: {}", resp.code);
     Ok(resp.code)
 }
 
@@ -94,13 +105,24 @@ async fn get_members(state: State<'_, Mutex<AppState>>) -> Result<String, ()> {
     let mut state = state.lock().await;
 
     state.member = Member::new()
-        .init(WX_CLIENT.client(), &state.base)
+        .init(state.client.client(), &state.base)
         .await
         .unwrap();
+    // member_list: Vec<ContactMember>
 
     let data = serde_json::to_string(&state.member.member_list).unwrap();
     println!("members={:?}", &data);
     Ok(data)
+}
+
+#[command]
+async fn get_auth(state: State<'_, Mutex<AppState>>) -> Result<i64, ()> {
+    println!("load wechat auth");
+    let mut state = state.lock().await;
+
+    state.auth = Auth::new().init().await.unwrap();
+
+    Ok(state.auth.expired_time())
 }
 
 #[command]
@@ -148,9 +170,12 @@ fn create_auto_reply_rule(_: State<'_, Mutex<AppState>>, config: String) -> Resu
 }
 
 #[command]
-fn get_auto_reply_rules(_: State<'_, Mutex<AppState>>) -> Result<String, ()> {
+async fn get_auto_reply_rules(state: State<'_, Mutex<AppState>>) -> Result<String, ()> {
     println!("get auto reply rules");
-    let rules = AutoReplyRuleService::new().m_get().unwrap();
+    let mut state = state.lock().await;
+    let rules = AutoReplyRuleService::new()
+        .m_get_with_status_update(&state.auth)
+        .unwrap();
     let configs = serde_json::to_string(&rules).unwrap();
     println!("rules={:?}", &rules);
     Ok(configs)
@@ -171,8 +196,20 @@ fn update_auto_reply_rule(_: State<'_, Mutex<AppState>>, config: String) -> Resu
     let rule: AutoReplyRule = serde_json::from_str(&config).unwrap();
     let rules = AutoReplyRuleService::new().update(rule).unwrap();
     let configs = serde_json::to_string(&rules).unwrap();
-    println!("rules={:?}", &rules);
+    println!("rules={:?}", configs);
     Ok(configs)
+}
+
+#[command]
+async fn switch_auto_reply_rule_status(
+    state: State<'_, Mutex<AppState>>,
+    id: String,
+) -> Result<String, ()> {
+    println!("switch auto reply rule status");
+    let state = state.lock().await;
+    let resp = AutoReplyRuleService::new().switch_status(id,&state.auth).await.unwrap();
+    println!("switch resp={:?}", &resp);
+    Ok(serde_json::to_string(&resp).unwrap())
 }
 
 #[command]
@@ -241,58 +278,92 @@ fn update_openai_config(_: State<'_, Mutex<AppState>>, configs: String) -> Resul
 }
 
 #[command]
-async fn listen(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
+async fn sync_check(state: State<'_, Mutex<AppState>>) -> Result<bool, ()> {
+    println!("sync check");
     let mut state = state.lock().await;
-    let arc_base = Arc::new(Mutex::new(state.base.clone()));
-    let next_arc_base = Arc::clone(&arc_base);
+    if !state.login {
+        return Ok(false);
+    }
 
-    let (tx, mut rx) = mpsc::channel(1);
-    let mut handle = tokio::spawn(async move {
-        // let mut service = MessageService::new();
-        let mut executor = Executor::new();
+    // let m = state.member.clone();
 
-        loop {
-            let temp = Arc::clone(&arc_base);
-            let mut base = temp.lock().await;
-            println!("waiting for response");
-            let _ = executor
-                .auto_reply(WX_CLIENT.client(), &mut base)
-                .await
-                .unwrap();
-            tx.send(true).await.unwrap();
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    });
-    loop {
-        // 设置超时时间
-        match timeout(Duration::from_secs(60), rx.recv()).await {
-            Ok(Some(_)) => {
-                println!("Task has resumed running");
+    // 添加错误处理和重试机制
+    match Executor::new()
+        .auto_reply(state.client.client(), &Member::new(), &mut state.base)
+        .await
+    {
+        Ok(login) => Ok(login),
+        Err(e) => {
+            println!("error={:?}", e);
+            // 判断错误类型
+            if let Some(err) = e.downcast_ref::<reqwest::Error>() {
+                if err.is_connect() {
+                    println!("网络连接失败（可能断网）");
+                    state.login = false;
+                    return Ok(false); // 断网继续重试
+                }
             }
-            Ok(None) | Err(_) => {
-                println!("Task did not resume in time. Trying to restart...");
-                handle.abort();
-
-                let (next_tx, next_rx) = mpsc::channel(1);
-                rx = next_rx;
-                let next_base = Arc::clone(&next_arc_base);
-                let next_handle = tokio::spawn(async move {
-                    // let mut service = MessageService::new();
-                    let mut executor = Executor::new();
-                    loop {
-                        println!("waiting for response");
-                        let temp = Arc::clone(&next_base);
-                        let mut base = temp.lock().await;
-                        executor.auto_reply(WX_CLIENT.client(), &mut base).await;
-                        next_tx.send(true).await.unwrap();
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                });
-                handle = next_handle;
-            }
+            Ok(true)
         }
     }
 }
+
+// #[command]
+// async fn listen(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
+//     let state = state.lock().await;
+//     let arc_base = Arc::new(Mutex::new(state.base.clone()));
+//     let next_arc_base = Arc::clone(&arc_base);
+//
+//     let (tx, mut rx) = mpsc::channel(1);
+//     let mut handle = tokio::spawn(async move {
+//         let mut executor = Executor::new();
+//         loop {
+//             let temp = Arc::clone(&arc_base);
+//             let mut base = temp.lock().await;
+//             println!("waiting for response");
+//             let _ = executor
+//                 .auto_reply(state.client.client(), &mut base)
+//                 .await
+//                 .unwrap();
+//
+//             tx.send(true).await.unwrap();
+//             tokio::time::sleep(Duration::from_secs(1)).await;
+//         }
+//     });
+//     loop {
+//         // 设置超时时间
+//         match timeout(Duration::from_secs(60), rx.recv()).await {
+//             Ok(Some(_)) => {
+//                 println!("Task has resumed running");
+//             }
+//             Ok(None) | Err(_) => {
+//                 println!("Task did not resume in time. Trying to restart...");
+//                 handle.abort();
+//
+//                 let (next_tx, next_rx) = mpsc::channel(1);
+//                 rx = next_rx;
+//                 let next_base = Arc::clone(&next_arc_base);
+//                 let next_handle = tokio::spawn(async move {
+//                     let mut executor = Executor::new();
+//                     loop {
+//                         println!("waiting for response");
+//                         let temp = Arc::clone(&next_base);
+//                         let mut base = temp.lock().await;
+//
+//                         let _ = executor
+//                             .auto_reply(state.client.client(), &mut base)
+//                             .await
+//                             .unwrap();
+//
+//                         next_tx.send(true).await.unwrap();
+//                         tokio::time::sleep(Duration::from_secs(1)).await;
+//                     }
+//                 });
+//                 handle = next_handle;
+//             }
+//         }
+//     }
+// }
 
 #[command]
 fn create_scheduled_rule(_: State<'_, Mutex<AppState>>, config: String) -> Result<String, ()> {
@@ -330,6 +401,25 @@ fn update_scheduled_rule(_: State<'_, Mutex<AppState>>, config: String) -> Resul
     println!("rules={:?}", &rules);
     Ok(configs)
 }
+#[command]
+async fn logout(state: State<'_, Mutex<AppState>>) -> Result<(), ()> {
+    println!("logout");
+    let mut state = state.lock().await;
+    state.login = false;
+    state.base = Base::new();
+    state.member = Member::new();
+    state.client = WxOpenapiClient::new();
+    state.uuid = String::default();
+    Ok(())
+}
+
+#[command]
+async fn redeem(state: State<'_, Mutex<AppState>>,token: String) -> Result<String, ()> {
+    let mut state = state.lock().await;
+    let resp = state.auth.redeem(token).await.unwrap();
+    println!("redeem resp={:?}", &resp);
+    Ok(serde_json::to_string(&resp).unwrap())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {
@@ -347,8 +437,10 @@ pub async fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             refresh,
-            check,
+            login_check,
+            logout,
             get_members,
+            get_auth,
             get_user,
             create_group,
             get_groups,
@@ -364,11 +456,13 @@ pub async fn run() {
             test_openai,
             get_openai_config,
             update_openai_config,
-            listen,
+            sync_check,
             create_scheduled_rule,
             get_scheduled_rules,
             del_scheduled_rule,
             update_scheduled_rule,
+            switch_auto_reply_rule_status,
+            redeem,
         ])
         .run(generate_context! {})
         .expect("error while running tauri application");

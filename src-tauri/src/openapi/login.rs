@@ -28,6 +28,15 @@ pub struct CheckResp {
     pub redirect_uri: String,
 }
 
+impl CheckResp {
+    pub fn default() -> CheckResp {
+        CheckResp {
+            code: "".to_string(),
+            redirect_uri: "".to_string(),
+        }
+    }
+}
+
 impl Login {
     pub(crate) fn new() -> Login {
         Login {
@@ -89,7 +98,7 @@ impl Login {
             .await?
             .text()
             .await?;
-        println!("[check][check] data:{}", text);
+
         let code = capture(&self.code_re, text.as_str()).unwrap_or_default();
         Ok(CheckResp {
             code,

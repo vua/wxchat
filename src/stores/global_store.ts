@@ -55,9 +55,9 @@ export interface OpenAi {
 }
 
 export interface OpenAiConfig {
-    Source: string,
-    Url: string,
-    Model: string[]
+    source: string,
+    url: string,
+    model: string[]
 }
 
 export interface ScheduledRule {
@@ -69,11 +69,31 @@ export interface ScheduledRule {
     Status: boolean
 }
 
+export interface RedeemResp {
+    ExpiredTime: number
+    StatusInfo: StatusInfo,
+}
+
+export interface SwitchAutoReplyRuleStatusResp {
+    Rules: AutoReplyRule[],
+    StatusInfo: StatusInfo,
+}
+
+export interface StatusInfo {
+    StatusCode: number,
+    StatusMsg: string,
+}
+
 export const globalStore = defineStore('global', () => {
-    const loading_completed = ref<boolean>(false)
+    const homepage_enable = ref<boolean>(false)
+    const logout = ref<boolean>(false)
     const members = ref<Member[]>([])
     const select_members = ref<Member[]>([])
-    const user = ref<User>()
+    const user = ref<User>({
+        UserName: "",
+        PYQuanPin: "",
+        NickName: ""
+    })
     const groups = ref<Group[]>([])
     const auto_reply_rules = ref<AutoReplyRule[]>([])
     const scheduled_rules = ref<ScheduledRule[]>([])
@@ -82,10 +102,11 @@ export const globalStore = defineStore('global', () => {
     const openai_list = ref<OpenAi[]>([])
     const openai_config_list = ref<OpenAiConfig[]>([])
     const root = ref<string>("")
-    const allow = ref<boolean>((new Date()).getTime() / 1000 < 1740758400)
+    const expired_time = ref<number>(0)
 
     return {
-        loading_completed,
+        homepage_enable,
+        logout,
         member_table,
         members,
         select_members,
@@ -97,6 +118,6 @@ export const globalStore = defineStore('global', () => {
         selectable,
         openai_config_list,
         root,
-        allow
+        expired_time
     }
 })

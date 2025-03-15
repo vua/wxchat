@@ -1,14 +1,16 @@
-use crate::openapi::base::{get_head_img, Base, BaseResponse};
+use crate::openapi::base::{get_head_img, Base, BaseResponse, User};
 use crate::openapi::rule::GroupService;
 use crate::openapi::tool::time_tool::get_r;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::from_str;
+use std::collections::HashMap;
 use std::error::Error;
 
+#[derive(Clone, Debug)]
 pub struct Member {
     pub member_list: Vec<ContactMember>,
-    // pub member_map: HashMap<String, ContactMember>,
+    pub member_map: HashMap<String, ContactMember>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -43,6 +45,42 @@ pub struct ContactMember {
     pub key_word: String,
     pub encry_chat_room_id: String,
     pub is_owner: i64,
+}
+
+impl ContactMember {
+    pub fn from(user: &User) -> ContactMember {
+        ContactMember {
+            uin: user.uin,
+            user_name: user.user_name.clone(),
+            nick_name: user.nick_name.clone(),
+            head_img_url: user.head_img_url.clone(),
+            contact_flag: user.contact_flag,
+            member_count: 0,
+            member_list: Vec::new(),
+            remark_name: user.remark_name.clone(),
+            hide_input_bar_flag: user.hide_input_bar_flag,
+            sex: user.sex,
+            signature: user.signature.clone(),
+            verify_flag: user.verify_flag,
+            owner_uin: 0,
+            p_y_quan_pin: user.user_name.clone(),
+            remark_p_y_initial: user.remark_p_y_initial.clone(),
+            remark_p_y_quan_pin: user.remark_p_y_quan_pin.clone(),
+            star_friend: user.star_friend,
+            app_account_flag: user.app_account_flag,
+            statues: 0,
+            province: "".to_string(),
+            city: "".to_string(),
+            alias: "".to_string(),
+            sns_flag: user.sns_flag,
+            uni_friend: 0,
+            display_name: "".to_string(),
+            chat_room_id: 0,
+            key_word: "".to_string(),
+            encry_chat_room_id: "".to_string(),
+            is_owner: 0,
+        }
+    }
 }
 
 impl Clone for ContactMember {
@@ -95,7 +133,12 @@ impl Member {
     pub fn new() -> Member {
         Member {
             member_list: Vec::new(),
+            member_map: HashMap::new(),
         }
+    }
+
+    pub fn get(&self, user_name: &str) -> Option<&ContactMember> {
+        self.member_map.get(user_name)
     }
 
     pub async fn init(mut self, cli: Client, base: &Base) -> Result<Member, Box<dyn Error>> {
@@ -124,8 +167,9 @@ impl Member {
             let username = member.user_name.clone();
             let pyquanpin = member.p_y_quan_pin.clone();
             let _base = base.clone();
+            self.member_map
+                .insert(member.user_name.to_string(), member.clone());
             self.member_list.push(member);
-            // self.member_map.insert(member.nick_name.to_string(), member);
             handles.push(tokio::spawn(async move {
                 if let Err(e) =
                     get_head_img(client, &_base, username.as_str(), pyquanpin.as_str()).await
@@ -134,6 +178,8 @@ impl Member {
                 }
             }));
         }
+
+        self.member_list.push(ContactMember::from(&base.user));
         for handle in handles {
             handle.await?;
         }

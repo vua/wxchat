@@ -7,28 +7,30 @@ import WxRule from "./component/WxRule.vue";
 import {globalStore} from "./stores/global_store.ts";
 import {storeToRefs} from "pinia";
 import WxUser from "./component/WxUser.vue";
-import WxBan from "./component/WxBan.vue";
 
 const store = globalStore()
-const {loading_completed, allow} = storeToRefs(store)
+const {homepage_enable} = storeToRefs(store)
 </script>
 <template>
   <div class="main">
-    <WxLogin v-if="allow&&!loading_completed" id="wx-login"/>
-    <div class="container">
+    <WxLogin v-if="!homepage_enable" id="wx-login"/>
+    <div class="container" v-if="homepage_enable">
       <div class="left">
-        <WxUser v-if="allow&&loading_completed" id="wx-user"/>
-        <WxMember v-if="allow&&loading_completed" id="wx-member"/>
+        <WxUser id="wx-user"/>
+        <WxMember id="wx-member"/>
       </div>
       <div class="right">
-        <WxRule v-if="allow&&loading_completed" id="wx-rule"/>
+        <WxRule id="wx-rule"/>
       </div>
     </div>
-    <WxBan id="wx-ban" v-if="!allow"></WxBan>
   </div>
 </template>
 
 <style scoped>
+
+.main {
+  height: calc(var(--vh) * 100);
+}
 
 .container {
   display: flex;
@@ -55,16 +57,6 @@ const {loading_completed, allow} = storeToRefs(store)
   height: 100vh;
 }
 
-#wx-login {
-  width: 100vw;
-  height: 100vh;
-}
-
-.main {
-  width: 100vw;
-  height: 100vh;
-}
-
 #wx-user {
   width: 60px;
 }
@@ -81,6 +73,7 @@ body, html {
   padding: 0;
   font-family: "微软雅黑", serif;
   font-size: 12px;
+  overflow: hidden;
 }
 
 </style>

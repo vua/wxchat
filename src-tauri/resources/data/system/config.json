@@ -1,8 +1,8 @@
 [
   {
-    "Source": "智谱",
-    "Url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-    "Model": [
+    "source": "智谱",
+    "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    "model": [
       "glm-4",
       "glm-4v",
       "glm-4-plus",
@@ -16,11 +16,10 @@
     ]
   },
   {
-    "Source": "DeepSeek",
-    "Url": "https://api.deepseek.com/chat/completions",
-    "Model": [
-      "deepseek-chat",
-      "deepseek-reasoner"
+    "source": "DeepSeek",
+    "url": "https://api.deepseek.com/chat/completions",
+    "model": [
+      "deepseek-chat"
     ]
   }
 ]

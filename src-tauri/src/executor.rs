@@ -1,8 +1,10 @@
 use crate::openapi::base::Base;
+use crate::openapi::error::WxChatError;
 use crate::openapi::message::MessageService;
 use crate::openapi::rule::{AutoReplyRuleService, OpenAiMessage, ScheduledRuleService};
 use reqwest::Client;
 use std::error::Error;
+use crate::openapi::member::Member;
 
 pub struct Executor {
     message_service: MessageService,
@@ -22,24 +24,23 @@ impl Executor {
     pub async fn auto_reply(
         &mut self,
         cli: Client,
-        base: &mut Base,
+        member: &Member,
+        base: &mut Base
     ) -> Result<bool, Box<dyn Error>> {
         let code = self.message_service.check(cli.clone(), base).await?;
         match code.unwrap().as_str() {
-            "1102" => {
-                self.message_service.alive = false;
+            "0" => {}
+            _ => {
                 return Ok(false);
             }
-            _ => {}
         }
-
         let sync_response = self.message_service.sync(cli.clone(), base).await?;
 
         println!("sync_response={:?}", sync_response);
 
         base.sync_key = sync_response.sync_check_key;
 
-        let rules = self.auto_reply_rule_service.m_get_running().unwrap();
+        let rules = self.auto_reply_rule_service.m_get_with_group().unwrap();
 
         for msg in sync_response.add_msg_list.iter() {
             println!("msg={}", serde_json::to_string(msg).unwrap());
@@ -49,17 +50,15 @@ impl Executor {
                     if msg.to_user_name != base.user.user_name {
                         continue;
                     }
-
                     for rule in rules.iter() {
-                        if !rule.group.hit(&msg.from_user_name) {
+
+                        if !rule.status || !rule.group.hit(&base.user,member.get(&msg.from_user_name).unwrap()) {
                             continue;
                         }
-
                         for reply in rule.reply.iter() {
                             if !reply.hit(&msg.content) {
                                 continue;
                             }
-
                             let messages = self.message_service.history.get(&msg.from_user_name);
 
                             let mut input = messages.clone();
@@ -69,11 +68,14 @@ impl Executor {
                                 content: msg.content.to_string(),
                             });
 
+                            println!("input={}", serde_json::to_string(&input).unwrap());
+
                             let output = reply.content(&input).await?;
                             if output.content.is_empty() {
                                 continue;
                             }
-                            println!("reply={:?}", &output);
+                            println!("output={:?}", &output);
+
                             self.message_service
                                 .send_text_msg(
                                     cli.clone(),

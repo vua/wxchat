@@ -1,5 +1,5 @@
 use crate::openapi::base::{Base, BaseResponse, SyncKey};
-use crate::openapi::rule::{OpenAiMessage};
+use crate::openapi::rule::OpenAiMessage;
 use crate::openapi::tool::str_tool::capture;
 use crate::openapi::tool::time_tool::{get_msg_id, get_r};
 use once_cell::sync::Lazy;
@@ -13,7 +13,6 @@ use std::option::Option;
 use std::sync::{Arc, Mutex};
 
 static HISTORY: Lazy<Arc<Mutex<History>>> = Lazy::new(|| Arc::new(Mutex::new(History::new(10))));
-
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -122,7 +121,6 @@ impl History {
 pub struct MessageService {
     retcode_re: Regex,
     selector_re: Regex,
-    pub alive: bool,
     pub history: History,
 }
 
@@ -131,7 +129,6 @@ impl MessageService {
         MessageService {
             retcode_re: Regex::new(r#"retcode:"(\d+)""#).unwrap(),
             selector_re: Regex::new(r#"selector:"(\d+)"}"#).unwrap(),
-            alive: true,
             history: History::new(10),
         }
     }
@@ -175,7 +172,6 @@ impl MessageService {
                 .await?;
             println!("text={}", text);
         }
-
         Ok(())
     }
 

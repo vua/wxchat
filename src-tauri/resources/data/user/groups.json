@@ -22,5 +22,11 @@
     "Name": "全部公众号",
     "Members": [],
     "Operator": "system"
+  },
+  {
+    "Id": "self",
+    "Name": "我",
+    "Members": [],
+    "Operator": "system"
   }
 ]
